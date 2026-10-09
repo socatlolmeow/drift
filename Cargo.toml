@@ -2,6 +2,8 @@
 name = "drift"
 version = "0.1.0"
 edition = "2021"
+
+[workspace]
 description = "A Vim-style terminal music player for YouTube Music (no login required)"
 license = "MIT"
 
