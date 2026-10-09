@@ -682,7 +682,17 @@ impl App {
     fn search_artist(&mut self, name: String) {
         let busy = format!("Loading songs by \u{201c}{name}\u{201d}");
         let title = format!("Artist: {name}");
-        self.spawn_loader(title, busy, move || ytmusic::search(&name));
+        self.spawn_loader(title, busy, move || {
+            let wanted = name.to_lowercase();
+            let tracks = ytmusic::search(&name)?;
+            Ok(tracks
+                .into_iter()
+                .filter(|t| {
+                    t.artist.to_lowercase() == wanted
+                        || split_artists(&t.artist).iter().any(|a| a.to_lowercase() == wanted)
+                })
+                .collect())
+        });
     }
 
     fn start_search(&mut self, query: String) {
