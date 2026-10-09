@@ -34,9 +34,39 @@ Stream your favourite music from YouTube Music — all in one client, in your te
 
 ## Installation
 
-> **Not implemented yet.**
->
-> Package manager installs are not available yet. Distro-specific instructions will be added here (Arch Linux, Void Linux, NixOS, Debian/Ubuntu, etc.) once packages are published.
+### Dependencies
+
+- [mpv](https://mpv.io/) — audio playback
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) — YouTube stream extraction
+- [Rust](https://rustup.rs/) (build only)
+
+Install them with your package manager, e.g. on Arch:
+```
+sudo pacman -S mpv yt-dlp
+```
+
+### Build & install
+
+```bash
+git clone https://github.com/socatlolmeow/drift.git
+cd drift
+sudo make install
+```
+
+This installs `drift` to `/usr/local/bin`. To install to `/usr/bin` instead:
+```bash
+sudo make install PREFIX=/usr
+```
+
+### Other make targets
+
+| Command | Description |
+|---|---|
+| `make` | Build (debug skipped, release only) |
+| `make build` | Same as above |
+| `sudo make install` | Build and install to `$PREFIX/bin` |
+| `sudo make uninstall` | Remove the installed binary |
+| `make clean` | Remove build artifacts |
 
 ---
 
