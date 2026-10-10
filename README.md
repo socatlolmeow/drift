@@ -2,6 +2,9 @@
 
 <h1>Drift</h1>
 
+[![Stars](https://img.shields.io/github/stars/socatlolmeow/drift?style=flat-square&logo=github)](https://github.com/USERNAME/REPO/stargazers)
+![License](https://img.shields.io/github/license/socatlolmeow/drift?style=flat-square)
+
 ### A music streaming client using Vim keybinds built in Rust.
 
 Stream your favourite music from YouTube Music — all in one client, in your terminal.
