@@ -237,7 +237,7 @@ impl App {
 
     pub fn on_tick(&mut self) {
         self.tick = self.tick.wrapping_add(1);
-        if self.tick % 50 == 0 {
+        if self.tick.is_multiple_of(50) {
             match self.save_session(false) {
                 Ok(()) => self.save_failed = false,
                 Err(e) if !self.save_failed => {
@@ -771,11 +771,11 @@ impl App {
     }
 
     fn with_player(&mut self, f: impl Fn(&mut Player) -> Result<()>) -> Result<()> {
-        match self.ensure_player().and_then(|p| f(p)) {
+        match self.ensure_player().and_then(&f) {
             Ok(()) => Ok(()),
             Err(_) => {
                 self.player = None;
-                self.ensure_player().and_then(|p| f(p))
+                self.ensure_player().and_then(f)
             }
         }
     }
@@ -797,7 +797,7 @@ impl App {
                 self.fail_streak = 0;
                 if let Some((id, pos)) = self.resume.take() {
                     let ok = self.now_track().is_some_and(|t| {
-                        t.id == id && t.duration.map_or(true, |d| pos < f64::from(d) - 1.0)
+                        t.id == id && t.duration.is_none_or(|d| pos < f64::from(d) - 1.0)
                     });
                     if ok && pos > 1.0 {
                         let _ = self.with_player(|p| p.seek_absolute(pos));
@@ -1240,10 +1240,7 @@ impl App {
         match self.view {
             View::Queue => self.remove_from_queue(i),
             View::Playlists if self.in_playlist() => self.remove_playlist_track(i),
-            View::Playlists => match self.playlist_name(i) {
-                Some(n) => self.delete_playlist(&n),
-                None => {}
-            },
+            View::Playlists => if let Some(n) = self.playlist_name(i) { self.delete_playlist(&n) },
             View::Results => self.info("Results can't be deleted — they are replaced by the next search"),
         }
     }
