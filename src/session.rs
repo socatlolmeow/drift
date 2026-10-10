@@ -28,12 +28,8 @@ impl Session {
     }
 
     pub fn load() -> Session {
-        let Ok(path) = Self::path() else {
-            return Session::default();
-        };
-        let Ok(text) = fs::read_to_string(&path) else {
-            return Session::default();
-        };
+        let Ok(path) = Self::path() else { return Session::default() };
+        let Ok(text) = fs::read_to_string(&path) else { return Session::default() };
         match serde_json::from_str::<Session>(&text) {
             Ok(mut s) => {
                 s.sanitize();
@@ -72,13 +68,7 @@ mod tests {
     use super::*;
 
     fn track(id: &str) -> Track {
-        Track {
-            id: id.into(),
-            title: "T".into(),
-            artist: "A".into(),
-            album: None,
-            duration: Some(200),
-        }
+        Track { id: id.into(), title: "T".into(), artist: "A".into(), album: None, duration: Some(200) }
     }
 
     #[test]
@@ -94,15 +84,8 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let ok = Session {
-            queue: vec![track("aaaaaaaaaaa")],
-            current: Some(0),
-            position: 42.5,
-        };
+        let ok = Session { queue: vec![track("aaaaaaaaaaa")], current: Some(0), position: 42.5 };
         let again: Session = serde_json::from_str(&ok.render().unwrap()).unwrap();
-        assert_eq!(
-            (again.current, again.position, again.queue),
-            (Some(0), 42.5, ok.queue)
-        );
+        assert_eq!((again.current, again.position, again.queue), (Some(0), 42.5, ok.queue));
     }
 }

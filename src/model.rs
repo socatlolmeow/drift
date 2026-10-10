@@ -24,9 +24,7 @@ impl Track {
 pub fn split_artists(credit: &str) -> Vec<String> {
     const MARK: char = '\u{1}';
     let mut s = credit.to_string();
-    for sep in [
-        " & ", ", ", " feat. ", " Feat. ", " feat ", " ft. ", " Ft. ", " × ",
-    ] {
+    for sep in [" & ", ", ", " feat. ", " Feat. ", " feat ", " ft. ", " Ft. ", " × "] {
         s = s.replace(sep, &MARK.to_string());
     }
     let mut out: Vec<String> = Vec::new();
@@ -63,11 +61,7 @@ pub fn parse_clock(s: &str) -> Option<f64> {
 }
 
 pub fn fmt_time(secs: f64) -> String {
-    let s = if secs.is_finite() {
-        secs.max(0.0) as u64
-    } else {
-        0
-    };
+    let s = if secs.is_finite() { secs.max(0.0) as u64 } else { 0 };
     let (h, m, s) = (s / 3600, (s % 3600) / 60, s % 60);
     if h > 0 {
         format!("{h}:{m:02}:{s:02}")

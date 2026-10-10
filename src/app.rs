@@ -48,6 +48,7 @@ pub enum Mode {
     Normal,
     Command,
     ArtistPick,
+    ConfirmDelete,
     Help,
 }
 
@@ -86,6 +87,7 @@ pub struct App {
     pub cmd_buf: String,
     pub artist_opts: Vec<String>,
     pub artist_sel: usize,
+    pub pending_delete: Option<String>,
     pub help_scroll: usize,
     history: Vec<String>,
     hist_pos: Option<usize>,
@@ -148,6 +150,7 @@ impl App {
             cmd_buf: String::new(),
             artist_opts: Vec::new(),
             artist_sel: 0,
+            pending_delete: None,
             help_scroll: 0,
             history: Vec::new(),
             hist_pos: None,
@@ -230,17 +233,13 @@ impl App {
     }
 
     fn set_status(&mut self, text: String, level: Level) {
-        self.status = Some(Status {
-            text,
-            level,
-            at: Instant::now(),
-        });
+        self.status = Some(Status { text, level, at: Instant::now() });
     }
 
     pub fn visible_status(&self) -> Option<&Status> {
-        self.status
-            .as_ref()
-            .filter(|s| s.at.elapsed().as_secs() < if s.level == Level::Error { 12 } else { 6 })
+        self.status.as_ref().filter(|s| {
+            s.at.elapsed().as_secs() < if s.level == Level::Error { 12 } else { 6 }
+        })
     }
 
     pub fn on_tick(&mut self) {
@@ -267,17 +266,11 @@ impl App {
 
     pub fn in_playlist(&self) -> bool {
         self.view == View::Playlists
-            && self
-                .open
-                .as_ref()
-                .is_some_and(|n| self.store.playlists.contains_key(n))
+            && self.open.as_ref().is_some_and(|n| self.store.playlists.contains_key(n))
     }
 
     pub fn open_len(&self) -> usize {
-        self.open
-            .as_ref()
-            .and_then(|n| self.store.playlists.get(n))
-            .map_or(0, |t| t.len())
+        self.open.as_ref().and_then(|n| self.store.playlists.get(n)).map_or(0, |t| t.len())
     }
 
     fn cur_len(&self) -> usize {
@@ -347,6 +340,7 @@ impl App {
             Mode::Help => self.key_help(key),
             Mode::Command => self.key_command(key),
             Mode::ArtistPick => self.key_artist_pick(key),
+            Mode::ConfirmDelete => self.key_confirm_delete(key),
             Mode::Normal => self.key_normal(key),
         }
     }
@@ -425,12 +419,8 @@ impl App {
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('n') | KeyCode::Char('>') => self.next(),
             KeyCode::Char('N') | KeyCode::Char('<') => self.prev(),
-            KeyCode::Char('h') | KeyCode::Left => {
-                self.seek(Amount::Delta(-self.seek_step * times as f64))
-            }
-            KeyCode::Char('l') | KeyCode::Right => {
-                self.seek(Amount::Delta(self.seek_step * times as f64))
-            }
+            KeyCode::Char('h') | KeyCode::Left => self.seek(Amount::Delta(-self.seek_step * times as f64)),
+            KeyCode::Char('l') | KeyCode::Right => self.seek(Amount::Delta(self.seek_step * times as f64)),
             KeyCode::Char('+') | KeyCode::Char('=') => {
                 self.set_volume(Amount::Delta(self.volume_step * times as f64))
             }
@@ -458,6 +448,14 @@ impl App {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Esc => self.status = None,
             _ => {}
+        }
+    }
+
+    fn key_confirm_delete(&mut self, key: KeyEvent) {
+        self.mode = Mode::Normal;
+        let name = self.pending_delete.take();
+        if let (KeyCode::Char('y'), Some(name)) = (key.code, name) {
+            self.delete_playlist(&name);
         }
     }
 
@@ -680,9 +678,7 @@ impl App {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => self.close_artist_pick(),
-            KeyCode::Char('j') | KeyCode::Down => {
-                self.artist_sel = (self.artist_sel + 1).min(len - 1)
-            }
+            KeyCode::Char('j') | KeyCode::Down => self.artist_sel = (self.artist_sel + 1).min(len - 1),
             KeyCode::Char('k') | KeyCode::Up => self.artist_sel = self.artist_sel.saturating_sub(1),
             KeyCode::Char(c @ '1'..='9') => {
                 let i = c as usize - '1' as usize;
@@ -720,28 +716,22 @@ impl App {
                 .into_iter()
                 .filter(|t| {
                     t.artist.to_lowercase() == wanted
-                        || split_artists(&t.artist)
-                            .iter()
-                            .any(|a| a.to_lowercase() == wanted)
+                        || split_artists(&t.artist).iter().any(|a| a.to_lowercase() == wanted)
                 })
                 .collect())
         });
     }
 
     fn start_search(&mut self, query: String) {
-        self.spawn_loader(
-            format!("Search: {query}"),
-            format!("Searching \u{201c}{query}\u{201d}"),
-            move || ytmusic::search(&query),
-        );
+        self.spawn_loader(format!("Search: {query}"), format!("Searching \u{201c}{query}\u{201d}"), move || {
+            ytmusic::search(&query)
+        });
     }
 
     fn start_import(&mut self, url: String) {
-        self.spawn_loader(
-            "Imported playlist".into(),
-            "Importing playlist".into(),
-            move || ytmusic::import(&url),
-        );
+        self.spawn_loader("Imported playlist".into(), "Importing playlist".into(), move || {
+            ytmusic::import(&url)
+        });
     }
 
     fn spawn_loader<F>(&mut self, title: String, busy: String, work: F)
@@ -853,9 +843,7 @@ impl App {
                         "Playback failed 3 times in a row ({msg}). Update yt-dlp: yt-dlp -U"
                     ));
                 } else {
-                    self.error(format!(
-                        "Can't play \u{201c}{name}\u{201d} ({msg}) — skipping"
-                    ));
+                    self.error(format!("Can't play \u{201c}{name}\u{201d} ({msg}) — skipping"));
                     self.advance(true);
                 }
             }
@@ -874,9 +862,7 @@ impl App {
     }
 
     fn start_track(&mut self, i: usize, keep_resume: bool) {
-        let Some(track) = self.queue.get(i).cloned() else {
-            return;
-        };
+        let Some(track) = self.queue.get(i).cloned() else { return };
         if !keep_resume {
             self.resume = None;
         }
@@ -967,9 +953,7 @@ impl App {
     }
 
     fn play_radio(&mut self, i: usize) {
-        let Some(track) = self.radio.get(i).cloned() else {
-            return;
-        };
+        let Some(track) = self.radio.get(i).cloned() else { return };
         self.on_radio = true;
         self.result_cursor = Some(i);
         self.resume = None;
@@ -994,11 +978,7 @@ impl App {
         }
         match self.with_player(|p| p.set_pause(pause)) {
             Ok(()) => {
-                self.play_state = if pause {
-                    PlayState::Paused
-                } else {
-                    PlayState::Playing
-                };
+                self.play_state = if pause { PlayState::Paused } else { PlayState::Playing };
             }
             Err(e) => self.error(format!("{e:#}")),
         }
@@ -1162,10 +1142,7 @@ impl App {
         if let Some(c) = self.current {
             self.played.insert(c);
         }
-        self.info(format!(
-            "Shuffle: {}",
-            if self.shuffle { "on" } else { "off" }
-        ));
+        self.info(format!("Shuffle: {}", if self.shuffle { "on" } else { "off" }));
     }
 
     fn cycle_repeat(&mut self) {
@@ -1219,11 +1196,7 @@ impl App {
         if self.results.is_empty() {
             return self.error("No results to play");
         }
-        let start = if self.view == View::Results {
-            self.selected()
-        } else {
-            0
-        };
+        let start = if self.view == View::Results { self.selected() } else { 0 };
         self.queue = self.results.clone();
         self.played.clear();
         self.current = None;
@@ -1266,11 +1239,7 @@ impl App {
         }
         let sel = self.states[View::Queue.idx()].selected().unwrap_or(0);
         let len = self.queue.len();
-        self.states[View::Queue.idx()].select(if len == 0 {
-            None
-        } else {
-            Some(sel.min(len - 1))
-        });
+        self.states[View::Queue.idx()].select(if len == 0 { None } else { Some(sel.min(len - 1)) });
         self.info(format!("Removed: {}", removed.label()));
     }
 
@@ -1300,13 +1269,12 @@ impl App {
             View::Queue => self.remove_from_queue(i),
             View::Playlists if self.in_playlist() => self.remove_playlist_track(i),
             View::Playlists => {
-                if let Some(n) = self.playlist_name(i) {
-                    self.delete_playlist(&n)
+                if let Some(name) = self.playlist_name(i) {
+                    self.pending_delete = Some(name);
+                    self.mode = Mode::ConfirmDelete;
                 }
             }
-            View::Results => {
-                self.info("Results can't be deleted — they are replaced by the next search")
-            }
+            View::Results => self.info("Results can't be deleted — they are replaced by the next search"),
         }
     }
 
@@ -1325,13 +1293,9 @@ impl App {
             return self.error("Queue is empty — nothing to save");
         }
         let n = self.queue.len();
-        self.store
-            .playlists
-            .insert(name.to_string(), self.queue.clone());
+        self.store.playlists.insert(name.to_string(), self.queue.clone());
         if self.persist() {
-            self.info(format!(
-                "Saved {n} tracks to playlist \u{201c}{name}\u{201d}"
-            ));
+            self.info(format!("Saved {n} tracks to playlist \u{201c}{name}\u{201d}"));
         }
     }
 
@@ -1350,7 +1314,7 @@ impl App {
         let Some(track) = track else {
             return self.error("Select a track in Results or Queue first");
         };
-        let key = self.store.resolve(name).unwrap_or_else(|| name.to_string());
+        let key = self.store.resolve_exact(name).unwrap_or_else(|| name.to_string());
         let list = self.store.playlists.entry(key.clone()).or_default();
         if list.iter().any(|t| t.id == track.id) {
             return self.info(format!("Already in \u{201c}{key}\u{201d}"));
@@ -1377,14 +1341,10 @@ impl App {
             self.result_cursor = None;
             self.states[View::Queue.idx()].select(Some(0));
             self.play_index(0);
-            self.info(format!(
-                "Playing playlist \u{201c}{name}\u{201d} ({n} tracks)"
-            ));
+            self.info(format!("Playing playlist \u{201c}{name}\u{201d} ({n} tracks)"));
         } else {
             self.queue.extend(tracks);
-            self.info(format!(
-                "Appended \u{201c}{name}\u{201d} ({n} tracks) to the queue"
-            ));
+            self.info(format!("Appended \u{201c}{name}\u{201d} ({n} tracks) to the queue"));
         }
     }
 
@@ -1418,13 +1378,9 @@ impl App {
     }
 
     fn remove_playlist_track(&mut self, i: usize) {
-        let Some(name) = self.open.clone() else {
-            return;
-        };
+        let Some(name) = self.open.clone() else { return };
         let removed = {
-            let Some(list) = self.store.playlists.get_mut(&name) else {
-                return;
-            };
+            let Some(list) = self.store.playlists.get_mut(&name) else { return };
             if i >= list.len() {
                 None
             } else {
@@ -1435,13 +1391,9 @@ impl App {
         let Some((track, len)) = removed else {
             return self.error("No track selected");
         };
-        self.pl_state
-            .select(if len == 0 { None } else { Some(i.min(len - 1)) });
+        self.pl_state.select(if len == 0 { None } else { Some(i.min(len - 1)) });
         if self.persist() {
-            self.info(format!(
-                "Removed from \u{201c}{name}\u{201d}: {}",
-                track.label()
-            ));
+            self.info(format!("Removed from \u{201c}{name}\u{201d}: {}", track.label()));
         }
     }
 
@@ -1453,9 +1405,7 @@ impl App {
     }
 
     fn move_playlist_track(&mut self, dir: isize) {
-        let Some(name) = self.open.clone() else {
-            return;
-        };
+        let Some(name) = self.open.clone() else { return };
         let i = self.selected();
         let j = i as isize + dir;
         let moved = match self.store.playlists.get_mut(&name) {
@@ -1530,15 +1480,9 @@ mod tests {
         let mut app = App::new(tx);
         app.store.playlists.insert(
             "mix".into(),
-            vec![
-                track("aaaaaaaaaaa", "A"),
-                track("bbbbbbbbbbb", "B"),
-                track("ccccccccccc", "C"),
-            ],
+            vec![track("aaaaaaaaaaa", "A"), track("bbbbbbbbbbb", "B"), track("ccccccccccc", "C")],
         );
-        app.store
-            .playlists
-            .insert("other".into(), vec![track("ddddddddddd", "D")]);
+        app.store.playlists.insert("other".into(), vec![track("ddddddddddd", "D")]);
 
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
@@ -1557,18 +1501,12 @@ mod tests {
         assert_eq!(app.selected(), 2);
 
         press(&mut app, KeyCode::Char('K'));
-        let ids: Vec<&str> = app.store.playlists["mix"]
-            .iter()
-            .map(|t| t.id.as_str())
-            .collect();
+        let ids: Vec<&str> = app.store.playlists["mix"].iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["aaaaaaaaaaa", "ccccccccccc", "bbbbbbbbbbb"]);
         assert_eq!(app.selected(), 1);
 
         press(&mut app, KeyCode::Char('x'));
-        let ids: Vec<&str> = app.store.playlists["mix"]
-            .iter()
-            .map(|t| t.id.as_str())
-            .collect();
+        let ids: Vec<&str> = app.store.playlists["mix"].iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["aaaaaaaaaaa", "bbbbbbbbbbb"]);
         assert_eq!(app.selected(), 1);
 
@@ -1596,6 +1534,16 @@ mod tests {
         press(&mut app, KeyCode::Right);
         press(&mut app, KeyCode::Tab);
         assert_eq!(app.open, None);
+
+        app.set_view(View::Playlists);
+        press(&mut app, KeyCode::Char('x'));
+        assert!(app.mode == Mode::ConfirmDelete);
+        press(&mut app, KeyCode::Char('n'));
+        assert!(app.mode == Mode::Normal);
+        assert_eq!(app.store.playlists.len(), 2);
+        press(&mut app, KeyCode::Char('x'));
+        press(&mut app, KeyCode::Char('y'));
+        assert_eq!(app.store.playlists.len(), 1);
 
         check_artist_popup(&mut app);
 

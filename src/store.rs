@@ -72,27 +72,41 @@ impl Store {
         write_atomic(&Self::path()?, &serde_json::to_string_pretty(self)?)
     }
 
-    pub fn resolve(&self, name: &str) -> Option<String> {
+    pub fn resolve_exact(&self, name: &str) -> Option<String> {
         if self.playlists.contains_key(name) {
             return Some(name.to_string());
         }
         let lower = name.to_lowercase();
-        let ci: Vec<&String> = self
-            .playlists
-            .keys()
-            .filter(|k| k.to_lowercase() == lower)
-            .collect();
-        if ci.len() == 1 {
-            return Some(ci[0].clone());
+        let mut found = self.playlists.keys().filter(|k| k.to_lowercase() == lower);
+        match (found.next(), found.next()) {
+            (Some(k), None) => Some(k.clone()),
+            _ => None,
         }
-        let pre: Vec<&String> = self
-            .playlists
-            .keys()
-            .filter(|k| k.to_lowercase().starts_with(&lower))
-            .collect();
-        if pre.len() == 1 {
-            return Some(pre[0].clone());
-        }
-        None
+    }
+
+    pub fn resolve(&self, name: &str) -> Option<String> {
+        self.resolve_exact(name).or_else(|| {
+            let lower = name.to_lowercase();
+            let mut found = self.playlists.keys().filter(|k| k.to_lowercase().starts_with(&lower));
+            match (found.next(), found.next()) {
+                (Some(k), None) => Some(k.clone()),
+                _ => None,
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_ignores_prefixes() {
+        let mut s = Store::default();
+        s.playlists.insert("rock-classics".into(), Vec::new());
+        s.playlists.insert("Jazz".into(), Vec::new());
+        assert_eq!(s.resolve_exact("rock"), None);
+        assert_eq!(s.resolve("rock").as_deref(), Some("rock-classics"));
+        assert_eq!(s.resolve_exact("jazz").as_deref(), Some("Jazz"));
     }
 }

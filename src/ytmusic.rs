@@ -16,9 +16,7 @@ pub fn search(query: &str) -> Result<Vec<Track>, String> {
         Ok(tracks) if !tracks.is_empty() => Ok(tracks),
         Ok(_) => ytdlp_search(query).map_err(|e| format!("{e:#}")),
         Err(primary) => ytdlp_search(query).map_err(|fallback| {
-            format!(
-                "YouTube Music search failed ({primary:#}); yt-dlp fallback failed ({fallback:#})"
-            )
+            format!("YouTube Music search failed ({primary:#}); yt-dlp fallback failed ({fallback:#})")
         }),
     }
 }
@@ -75,9 +73,7 @@ fn search_innertube(query: &str) -> Result<Vec<Track>> {
         .set("Cookie", "SOCS=CAI")
         .send_json(body)
         .map_err(|e| anyhow!("request failed: {e}"))?;
-    let v: Value = resp
-        .into_json()
-        .context("invalid JSON from YouTube Music")?;
+    let v: Value = resp.into_json().context("invalid JSON from YouTube Music")?;
     Ok(parse_search_response(&v))
 }
 
@@ -119,9 +115,7 @@ fn column_segments(item: &Value, col: usize) -> Vec<String> {
     let mut segments = Vec::new();
     let mut cur = String::new();
     for run in runs.into_iter().flatten() {
-        let Some(text) = run.get("text").and_then(Value::as_str) else {
-            continue;
-        };
+        let Some(text) = run.get("text").and_then(Value::as_str) else { continue };
         if text.trim() == "•" {
             segments.push(std::mem::take(&mut cur));
         } else {
@@ -148,10 +142,7 @@ fn parse_item(item: &Value) -> Option<Track> {
     let title = column_segments(item, 0).into_iter().next()?;
 
     let mut meta = column_segments(item, 1);
-    if matches!(
-        meta.first().map(String::as_str),
-        Some("Song" | "Video" | "Episode")
-    ) {
+    if matches!(meta.first().map(String::as_str), Some("Song" | "Video" | "Episode")) {
         meta.remove(0);
     }
     let duration = match meta.last() {
@@ -162,10 +153,7 @@ fn parse_item(item: &Value) -> Option<Track> {
         }
         _ => None,
     };
-    let artist = meta
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "Unknown artist".into());
+    let artist = meta.first().cloned().unwrap_or_else(|| "Unknown artist".into());
     let album = meta
         .get(1)
         .filter(|a| !a.contains(" views") && !a.contains(" plays"))

@@ -26,7 +26,10 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn spawn(volume: u8, on_event: impl Fn(PlayerEvent) + Send + 'static) -> Result<Player> {
+    pub fn spawn(
+        volume: u8,
+        on_event: impl Fn(PlayerEvent) + Send + 'static,
+    ) -> Result<Player> {
         let sock_dir = dirs::runtime_dir().unwrap_or_else(std::env::temp_dir);
         let sock_path = sock_dir.join(format!("drift-{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&sock_path);
@@ -48,14 +51,10 @@ impl Player {
         .arg(format!("--volume={volume}"))
         .arg(format!("--input-ipc-server={}", sock_path.display()));
 
-        if let Ok(extra) =
-            std::env::var("DRIFT_MPV_ARGS").or_else(|_| std::env::var("YTM_MPV_ARGS"))
-        {
+        if let Ok(extra) = std::env::var("DRIFT_MPV_ARGS").or_else(|_| std::env::var("YTM_MPV_ARGS")) {
             cmd.args(extra.split_whitespace());
         }
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+        cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
 
         #[cfg(target_os = "linux")]
         unsafe {
@@ -99,21 +98,14 @@ impl Player {
             sock_path,
         };
 
-        for (id, prop) in [
-            (1, "time-pos"),
-            (2, "duration"),
-            (3, "pause"),
-            (4, "volume"),
-        ] {
+        for (id, prop) in [(1, "time-pos"), (2, "duration"), (3, "pause"), (4, "volume")] {
             player.send(json!(["observe_property", id, prop]))?;
         }
 
         std::thread::spawn(move || {
             for line in BufReader::new(reader).lines() {
                 let Ok(line) = line else { break };
-                let Ok(v) = serde_json::from_str::<Value>(&line) else {
-                    continue;
-                };
+                let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
                 if let Some(ev) = parse_event(&v) {
                     on_event(ev);
                 }
@@ -216,9 +208,7 @@ mod tests {
     fn mpv_roundtrip() {
         use std::sync::mpsc;
         let wav = std::env::temp_dir().join("drift-test.wav");
-        let samples: Vec<u8> = (0..16_000u32)
-            .map(|i| if (i / 20) % 2 == 0 { 140 } else { 116 })
-            .collect();
+        let samples: Vec<u8> = (0..16_000u32).map(|i| if (i / 20) % 2 == 0 { 140 } else { 116 }).collect();
         let mut data = Vec::new();
         data.extend_from_slice(b"RIFF");
         data.extend_from_slice(&(36 + samples.len() as u32).to_le_bytes());
