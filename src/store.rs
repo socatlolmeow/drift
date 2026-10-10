@@ -87,7 +87,10 @@ impl Store {
     pub fn resolve(&self, name: &str) -> Option<String> {
         self.resolve_exact(name).or_else(|| {
             let lower = name.to_lowercase();
-            let mut found = self.playlists.keys().filter(|k| k.to_lowercase().starts_with(&lower));
+            let mut found = self
+                .playlists
+                .keys()
+                .filter(|k| k.to_lowercase().starts_with(&lower));
             match (found.next(), found.next()) {
                 (Some(k), None) => Some(k.clone()),
                 _ => None,
