@@ -100,7 +100,9 @@ pub struct App {
     pub repeat: RepeatMode,
     played: HashSet<usize>,
     fail_streak: u8,
-    autoplay: bool,
+    result_cursor: Option<usize>,
+    radio: Vec<Track>,
+    on_radio: bool,
     seek_step: f64,
     volume_step: f64,
     resume: Option<(String, f64)>,
@@ -124,7 +126,6 @@ impl App {
         config::migrate_legacy();
         let (cfg, cfg_warning) = Config::load();
         let p = cfg.playback;
-        let session = if p.restore_session { Session::load() } else { Session::default() };
         let warning = cfg_warning.or(store_warning);
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -136,8 +137,8 @@ impl App {
             mode: Mode::Normal,
             results: Vec::new(),
             results_title: "Results".into(),
-            queue: session.queue,
-            current: session.current,
+            queue: Vec::new(),
+            current: None,
             store,
             states: Default::default(),
             open: None,
@@ -158,7 +159,9 @@ impl App {
             repeat: p.repeat,
             played: HashSet::new(),
             fail_streak: 0,
-            autoplay: p.autoplay,
+            result_cursor: None,
+            radio: Vec::new(),
+            on_radio: false,
             seek_step: p.seek_step,
             volume_step: p.volume_step,
             resume: None,
@@ -173,18 +176,21 @@ impl App {
             tx,
             rng: seed,
         };
+        if p.restore_session {
+            let s = Session::load();
+            app.resume = s
+                .current
+                .and_then(|c| s.queue.get(c))
+                .map(|t| (t.id.clone(), s.position));
+            app.current = s.current;
+            app.queue = s.queue;
+            if !app.queue.is_empty() {
+                app.states[View::Queue.idx()].select(Some(app.current.unwrap_or(0)));
+            }
+        }
         match warning {
             Some(w) => app.error(w),
             None => app.info("Welcome! Press / to search, ? for help."),
-        }
-        if let Some(t) = app.now_track().cloned() {
-            app.position = session.position;
-            app.duration = t.duration.map_or(0.0, f64::from);
-            app.resume = Some((t.id, session.position));
-            app.states[View::Queue.idx()].select(app.current);
-            if app.autoplay {
-                app.play_default();
-            }
         }
         app
     }
@@ -200,7 +206,7 @@ impl App {
         let session = Session {
             queue: self.queue.clone(),
             current: self.current,
-            position: self.position,
+            position: if self.on_radio { 0.0 } else { self.position },
         };
         let text = session.render()?;
         if !force && text == self.saved {
@@ -309,6 +315,9 @@ impl App {
     }
 
     pub fn now_track(&self) -> Option<&Track> {
+        if self.on_radio {
+            return self.result_cursor.and_then(|i| self.radio.get(i));
+        }
         self.current.and_then(|i| self.queue.get(i))
     }
 
@@ -833,6 +842,7 @@ impl App {
         if !keep_resume {
             self.resume = None;
         }
+        self.on_radio = false;
         self.current = Some(i);
         self.played.insert(i);
         self.play_state = PlayState::Loading;
@@ -862,8 +872,8 @@ impl App {
         if self.queue.is_empty() {
             match self.view {
                 View::Results if !self.results.is_empty() => {
-                    let t = self.results[self.selected().min(self.results.len() - 1)].clone();
-                    self.play_now(t);
+                    let i = self.selected().min(self.results.len() - 1);
+                    self.play_result(i);
                 }
                 View::Playlists if !self.store.playlists.is_empty() => {
                     let i = self.selected();
@@ -888,10 +898,11 @@ impl App {
 
     fn activate_at(&mut self, view: View, i: usize) {
         match view {
-            View::Results => match self.results.get(i).cloned() {
-                Some(t) => self.play_now(t),
-                None => {}
-            },
+            View::Results => {
+                if i < self.results.len() {
+                    self.play_result(i);
+                }
+            }
             View::Queue => {
                 if i < self.queue.len() {
                     self.play_index(i);
@@ -909,14 +920,30 @@ impl App {
         }
     }
 
-    fn play_now(&mut self, t: Track) {
-        if let Some(k) = self.queue.iter().position(|q| q.id == t.id) {
-            return self.play_index(k);
+    fn play_result(&mut self, i: usize) {
+        if i >= self.results.len() {
+            return;
         }
-        let at = self.current.map_or(self.queue.len(), |c| (c + 1).min(self.queue.len()));
-        self.queue.insert(at, t);
-        self.played.clear();
-        self.play_index(at);
+        self.radio = self.results.clone();
+        self.play_radio(i);
+    }
+
+    fn play_radio(&mut self, i: usize) {
+        let Some(track) = self.radio.get(i).cloned() else { return };
+        self.on_radio = true;
+        self.result_cursor = Some(i);
+        self.resume = None;
+        self.play_state = PlayState::Loading;
+        self.position = 0.0;
+        self.duration = track.duration.map_or(0.0, f64::from);
+        let url = track.url();
+        match self.with_player(|p| p.load(&url)) {
+            Ok(()) => self.info(format!("♪ {}", track.label())),
+            Err(e) => {
+                self.play_state = PlayState::Stopped;
+                self.error(format!("Playback failed: {e:#}"));
+            }
+        }
     }
 
     fn set_pause(&mut self, pause: bool) {
@@ -951,13 +978,24 @@ impl App {
     }
 
     fn next(&mut self) {
-        if self.queue.is_empty() {
+        if self.queue.is_empty() && self.result_cursor.is_none() {
             return self.error("Queue is empty");
         }
         self.advance(false);
     }
 
     fn prev(&mut self) {
+        if let Some(cursor) = self.result_cursor.filter(|_| self.on_radio) {
+            if self.position > 3.0 {
+                return self.seek(Amount::Abs(0.0));
+            }
+            if cursor > 0 {
+                self.play_radio(cursor - 1);
+            } else {
+                self.seek(Amount::Abs(0.0));
+            }
+            return;
+        }
         let Some(c) = self.current else {
             return self.error("Nothing is playing");
         };
@@ -981,16 +1019,20 @@ impl App {
     }
 
     fn advance(&mut self, auto: bool) {
-        let len = self.queue.len();
-        if len == 0 {
-            return self.stop_playback();
-        }
         if auto && self.repeat == RepeatMode::One {
-            if let Some(c) = self.current {
+            if self.on_radio {
+                if let Some(c) = self.result_cursor {
+                    return self.play_radio(c);
+                }
+            } else if let Some(c) = self.current {
                 return self.play_index(c);
             }
         }
-        let next = if self.shuffle {
+
+        let len = self.queue.len();
+        let next = if len == 0 {
+            None
+        } else if self.shuffle {
             let mut pool: Vec<usize> = (0..len).filter(|i| !self.played.contains(i)).collect();
             if pool.is_empty() && self.repeat == RepeatMode::All {
                 self.played.clear();
@@ -1013,26 +1055,22 @@ impl App {
                 None => Some(0),
             }
         };
-        let next = next.or_else(|| self.next_from_results());
         match next {
             Some(i) => self.play_index(i),
+            None => self.advance_radio(auto),
+        }
+    }
+
+    fn advance_radio(&mut self, auto: bool) {
+        let next = self.result_cursor.map(|c| c + 1).filter(|&i| i < self.radio.len());
+        match next {
+            Some(i) => self.play_radio(i),
             None if auto => {
                 self.stop_playback();
                 self.info("Queue finished");
             }
             None => self.info("End of queue"),
         }
-    }
-
-    fn next_from_results(&mut self) -> Option<usize> {
-        let cur_id = self.now_track()?.id.clone();
-        let r = self.results.iter().position(|t| t.id == cur_id)?;
-        let next = self.results[r + 1..]
-            .iter()
-            .find(|t| !self.queue.iter().any(|q| q.id == t.id))?
-            .clone();
-        self.queue.push(next);
-        Some(self.queue.len() - 1)
     }
 
     fn seek(&mut self, amount: Amount) {
@@ -1134,6 +1172,7 @@ impl App {
         self.queue = self.results.clone();
         self.played.clear();
         self.current = None;
+        self.result_cursor = None;
         self.play_index(start.min(self.queue.len() - 1));
     }
 
@@ -1141,7 +1180,9 @@ impl App {
         self.queue.clear();
         self.current = None;
         self.played.clear();
-        self.stop_playback();
+        if !self.on_radio {
+            self.stop_playback();
+        }
         self.states[View::Queue.idx()].select(None);
         self.info("Queue cleared");
     }
@@ -1154,6 +1195,7 @@ impl App {
         self.played.clear();
         let active = self.play_state != PlayState::Stopped;
         match self.current {
+            Some(c) if c == i && self.on_radio => self.current = i.checked_sub(1),
             Some(c) if c == i => {
                 if self.queue.is_empty() {
                     self.current = None;
@@ -1266,6 +1308,7 @@ impl App {
             self.queue = tracks;
             self.played.clear();
             self.current = None;
+            self.result_cursor = None;
             self.states[View::Queue.idx()].select(Some(0));
             self.play_index(0);
             self.info(format!("Playing playlist \u{201c}{name}\u{201d} ({n} tracks)"));
@@ -1299,6 +1342,7 @@ impl App {
         self.queue = tracks;
         self.played.clear();
         self.current = None;
+        self.result_cursor = None;
         self.states[View::Queue.idx()].select(Some(i));
         self.play_index(i);
     }

@@ -170,7 +170,7 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
 
     if tracks.is_empty() {
         let hint: &[&str] = if view == View::Queue {
-            &["", "The queue is empty.", "Press Enter on a search result, or `a` to add it."]
+            &["", "The queue is empty.", "Press `a` on a search result to queue it."]
         } else {
             &["", "No results yet.", "Press / and type a query, or use  :search \"daft punk\""]
         };
