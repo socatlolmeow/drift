@@ -2,7 +2,7 @@
 
 <h1>Drift</h1>
 
-[![Stars](https://img.shields.io/github/stars/socatlolmeow/drift?style=flat-square&logo=github)](https://github.com/USERNAME/REPO/stargazers)
+[![Stars](https://img.shields.io/github/stars/socatlolmeow/drift?style=flat-square&logo=github)](https://github.com/socatlolmeow/drift/stargazers)
 ![License](https://img.shields.io/github/license/socatlolmeow/drift?style=flat-square)
 
 ### A music streaming client using Vim keybinds built in Rust.
@@ -14,7 +14,7 @@ Stream your favourite music from YouTube Music — all in one client, in your te
 ---
 
 <div align="center">
-  <img src="https://github.com/socatlolmeow/drift/blob/main/examples/showcase.gif" alt="Drift showcase" />
+  <img src="https://github.com/socatlolmeow/drift/blob/main/examples/showcase.gif?raw=true" alt="Drift showcase" />
 </div>
 
 ---
@@ -31,7 +31,7 @@ Stream your favourite music from YouTube Music — all in one client, in your te
 - **Artist search** — drill into an artist's discography from the results view
 - **Command palette** — full `:command` interface (`:search`, `:play`, `:volume`, `:seek`, `:save`, `:load`, `:import`, and more)
 - **Autoplay** — optionally keep playing through results when the queue ends
-- **TOML config** — persistent config at `~/.local/share/drift/config.toml`; comments are preserved across restarts
+- **TOML config** — persistent config at `~/.config/drift/config.toml` (your platform's config directory); drift never rewrites it, so comments are preserved
 
 ---
 
