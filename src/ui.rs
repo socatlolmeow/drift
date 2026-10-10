@@ -11,7 +11,10 @@ const ACCENT: Color = Color::Cyan;
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 fn selected_style() -> Style {
-    Style::new().fg(Color::Black).bg(ACCENT).add_modifier(Modifier::BOLD)
+    Style::new()
+        .fg(Color::Black)
+        .bg(ACCENT)
+        .add_modifier(Modifier::BOLD)
 }
 
 fn header_style() -> Style {
@@ -56,7 +59,10 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
     ])
     .areas(area);
 
-    f.render_widget(Paragraph::new(" ♪ Drift").style(Style::new().fg(ACCENT).bold()), name);
+    f.render_widget(
+        Paragraph::new(" ♪ Drift").style(Style::new().fg(ACCENT).bold()),
+        name,
+    );
 
     let titles = [
         format!(" Results {} ", app.results.len()),
@@ -83,6 +89,20 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+fn playing_marker(app: &App) -> Option<(String, &'static str)> {
+    let id = app
+        .now_track()
+        .filter(|_| app.play_state != PlayState::Stopped)?
+        .id
+        .clone();
+    let marker = match app.play_state {
+        PlayState::Paused => "⏸",
+        PlayState::Loading => "…",
+        _ => "▶",
+    };
+    Some((id, marker))
+}
+
 fn track_rows<'a>(
     tracks: &'a [Track],
     playing: Option<(&str, &'a str)>,
@@ -93,7 +113,11 @@ fn track_rows<'a>(
         .enumerate()
         .map(|(i, t)| {
             let is_playing = playing.is_some_and(|(id, _)| id == t.id);
-            let marker = if is_playing { playing.map_or("", |p| p.1) } else { "" };
+            let marker = if is_playing {
+                playing.map_or("", |p| p.1)
+            } else {
+                ""
+            };
             let mut cells = vec![
                 Cell::from(marker),
                 Cell::from(format!("{:>3}", i + 1)).style(dim()),
@@ -104,8 +128,7 @@ fn track_rows<'a>(
                 cells.push(Cell::from(t.album.as_deref().unwrap_or("")));
             }
             cells.push(
-                Cell::from(t.duration.map_or(String::new(), |d| fmt_time(d as f64)))
-                    .style(dim()),
+                Cell::from(t.duration.map_or(String::new(), |d| fmt_time(d as f64))).style(dim()),
             );
             let row = Row::new(cells);
             if is_playing {
@@ -142,23 +165,17 @@ fn track_table<'a>(rows: Vec<Row<'a>>, show_album: bool, block: Block<'a>) -> Ta
 fn empty_hint(f: &mut Frame, block: Block, area: Rect, lines: &[&str]) {
     let text: Vec<Line> = lines.iter().map(|l| Line::from(*l).style(dim())).collect();
     f.render_widget(
-        Paragraph::new(text).alignment(Alignment::Center).block(block),
+        Paragraph::new(text)
+            .alignment(Alignment::Center)
+            .block(block),
         area,
     );
 }
 
 fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
     let show_album = area.width >= 76 && view == View::Results;
-    let marker = match app.play_state {
-        PlayState::Paused => "⏸",
-        PlayState::Loading => "…",
-        _ => "▶",
-    };
-    let now_id = app
-        .now_track()
-        .filter(|_| app.play_state != PlayState::Stopped)
-        .map(|t| t.id.clone());
-    let playing = now_id.as_deref().map(|id| (id, marker));
+    let now = playing_marker(app);
+    let playing = now.as_ref().map(|(id, marker)| (id.as_str(), *marker));
 
     let (tracks, title) = match view {
         View::Queue => (&app.queue, " Queue ".to_string()),
@@ -170,9 +187,17 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
 
     if tracks.is_empty() {
         let hint: &[&str] = if view == View::Queue {
-            &["", "The queue is empty.", "Press `a` on a search result to queue it."]
+            &[
+                "",
+                "The queue is empty.",
+                "Press `a` on a search result to queue it.",
+            ]
         } else {
-            &["", "No results yet.", "Press / and type a query, or use  :search \"daft punk\""]
+            &[
+                "",
+                "No results yet.",
+                "Press / and type a query, or use  :search \"daft punk\"",
+            ]
         };
         return empty_hint(f, block, area, hint);
     }
@@ -183,18 +208,12 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
 }
 
 fn draw_open_playlist(f: &mut Frame, app: &mut App, area: Rect, name: &str) {
-    let marker = match app.play_state {
-        PlayState::Paused => "⏸",
-        PlayState::Loading => "…",
-        _ => "▶",
-    };
-    let now_id = app
-        .now_track()
-        .filter(|_| app.play_state != PlayState::Stopped)
-        .map(|t| t.id.clone());
-    let playing = now_id.as_deref().map(|id| (id, marker));
+    let now = playing_marker(app);
+    let playing = now.as_ref().map(|(id, marker)| (id.as_str(), *marker));
 
-    let Some(tracks) = app.store.playlists.get(name) else { return };
+    let Some(tracks) = app.store.playlists.get(name) else {
+        return;
+    };
     let block = Block::bordered()
         .title(format!(" {name} ({}) ", tracks.len()))
         .border_style(Style::new().fg(ACCENT));
@@ -203,7 +222,11 @@ fn draw_open_playlist(f: &mut Frame, app: &mut App, area: Rect, name: &str) {
             f,
             block,
             area,
-            &["", "This playlist is empty.", "Add songs with  :addto \"name\"  from Results or Queue."],
+            &[
+                "",
+                "This playlist is empty.",
+                "Add songs with  :addto \"name\"  from Results or Queue.",
+            ],
         );
     }
     let show_album = area.width >= 76;
@@ -230,7 +253,12 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
             f,
             block,
             left,
-            &["", "No playlists yet.", "Queue some songs, then", ":save \"name\""],
+            &[
+                "",
+                "No playlists yet.",
+                "Queue some songs, then",
+                ":save \"name\"",
+            ],
         );
         let b = Block::bordered().title(" Preview ").border_style(dim());
         f.render_widget(b, right);
@@ -252,7 +280,11 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
     let table = Table::new(
         rows,
-        [Constraint::Length(3), Constraint::Fill(1), Constraint::Length(5)],
+        [
+            Constraint::Length(3),
+            Constraint::Fill(1),
+            Constraint::Length(5),
+        ],
     )
     .header(Row::new(vec!["", "Name", "Songs"]).style(header_style()))
     .block(block)
@@ -261,7 +293,10 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
 
     let sel = app.selected();
     let preview_block = Block::bordered().title(" Preview ").border_style(dim());
-    match app.playlist_name(sel).and_then(|n| app.store.playlists.get(&n)) {
+    match app
+        .playlist_name(sel)
+        .and_then(|n| app.store.playlists.get(&n))
+    {
         Some(tracks) if !tracks.is_empty() => {
             let show_album = right.width >= 70;
             let rows = track_rows(tracks, None, show_album);
@@ -290,7 +325,12 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     let flags_w = flags.chars().count() as u16 + 1;
     let [title_area, flags_area] =
         Layout::horizontal([Constraint::Min(1), Constraint::Length(flags_w)]).areas(l1);
-    f.render_widget(Paragraph::new(flags).style(dim()).alignment(Alignment::Right), flags_area);
+    f.render_widget(
+        Paragraph::new(flags)
+            .style(dim())
+            .alignment(Alignment::Right),
+        flags_area,
+    );
 
     let icon = match app.play_state {
         PlayState::Playing => "▶".to_string(),
@@ -316,7 +356,14 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(line), title_area);
 
     let left = format!(" {} ", fmt_time(app.position));
-    let right = format!(" {} ", if app.duration > 0.0 { fmt_time(app.duration) } else { "--:--".into() });
+    let right = format!(
+        " {} ",
+        if app.duration > 0.0 {
+            fmt_time(app.duration)
+        } else {
+            "--:--".into()
+        }
+    );
     let bar_w = (l2.width as usize).saturating_sub(left.chars().count() + right.chars().count());
     let ratio = if app.duration > 0.0 {
         (app.position / app.duration).clamp(0.0, 1.0)
@@ -336,9 +383,12 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
 fn draw_cmdline(f: &mut Frame, app: &App, area: Rect) {
     if app.mode == Mode::Command {
         let text = format!(":{}", app.cmd_buf);
-        let x = area.x + text.chars().count() as u16;
+        let col = text
+            .chars()
+            .count()
+            .min(area.width.saturating_sub(1) as usize) as u16;
         f.render_widget(Paragraph::new(text), area);
-        f.set_cursor_position((x.min(area.right().saturating_sub(1)), area.y));
+        f.set_cursor_position((area.x + col, area.y));
         return;
     }
 
@@ -363,7 +413,9 @@ fn draw_cmdline(f: &mut Frame, app: &App, area: Rect) {
     }
     if !pending.is_empty() {
         f.render_widget(
-            Paragraph::new(format!("{pending} ")).alignment(Alignment::Right).style(Style::new().fg(Color::Yellow)),
+            Paragraph::new(format!("{pending} "))
+                .alignment(Alignment::Right)
+                .style(Style::new().fg(Color::Yellow)),
             area,
         );
     }
@@ -380,16 +432,25 @@ const HELP: &[(&str, &str)] = &[
     ("Tab  S-Tab", "cycle Results / Queue / Playlists"),
     ("gr  gq  gp", "jump to Results / Queue / Playlists"),
     ("PLAYBACK", "#"),
-    ("Enter", "play selected (on a playlist: load it; inside one: play from there)"),
+    (
+        "Enter",
+        "play selected (on a playlist: load it; inside one: play from there)",
+    ),
     ("Space", "pause / resume"),
     ("n  N  (or > <)", "next / previous track"),
     ("h l  / ← →", "seek -5s / +5s (counts: 6l)"),
     ("+  -", "volume up / down"),
     ("s  r", "toggle shuffle / cycle repeat"),
-    ("ga  or  :artist", "songs by the artist of the selected song; a popup asks which one when there are several"),
+    (
+        "ga  or  :artist",
+        "songs by the artist of the selected song; a popup asks which one when there are several",
+    ),
     ("QUEUE", "#"),
     ("a  A  P", "add selected / add all / play all results"),
-    ("dd  x", "remove from queue / delete playlist / delete track in a playlist"),
+    (
+        "dd  x",
+        "remove from queue / delete playlist / delete track in a playlist",
+    ),
     ("J K", "move queue or playlist item down / up"),
     ("PLAYLISTS", "#"),
     ("→ or l", "open the highlighted playlist"),
@@ -403,10 +464,19 @@ const HELP: &[(&str, &str)] = &[
     (":vol 50 | +5", "set or change the volume"),
     (":shuffle  :repeat [m]", "modes: off, all or one"),
     (":add [N]  :addall", "queue a result / all results"),
-    (":playall  :remove [N]", "play all results / remove from queue"),
+    (
+        ":playall  :remove [N]",
+        "play all results / remove from queue",
+    ),
     (":clear", "empty the queue"),
-    (":save n  :load n", "save the queue as a playlist / load one"),
-    (":append n  :delpl n", "append a playlist to the queue / delete it"),
+    (
+        ":save n  :load n",
+        "save the queue as a playlist / load one",
+    ),
+    (
+        ":append n  :delpl n",
+        "append a playlist to the queue / delete it",
+    ),
     (":addto n", "add the selected track to playlist n"),
     (":import URL", "load a YouTube / YT Music playlist"),
     (":artist", "same as ga"),
@@ -462,7 +532,10 @@ fn help_lines(inner_w: usize) -> Vec<Line<'static>> {
             }
         }
         for rest in desc {
-            lines.push(Line::from(vec![Span::raw(" ".repeat(key_w)), Span::raw(rest)]));
+            lines.push(Line::from(vec![
+                Span::raw(" ".repeat(key_w)),
+                Span::raw(rest),
+            ]));
         }
     }
     lines
@@ -470,9 +543,14 @@ fn help_lines(inner_w: usize) -> Vec<Line<'static>> {
 
 fn draw_artist_picker(f: &mut Frame, app: &App, area: Rect) {
     let n = app.artist_opts.len() as u16;
-    let widest = app.artist_opts.iter().map(|a| a.chars().count()).max().unwrap_or(0) as u16;
+    let widest = app
+        .artist_opts
+        .iter()
+        .map(|a| a.chars().count())
+        .max()
+        .unwrap_or(0) as u16;
     let w = (widest + 10).max(34).min(area.width);
-    let h = (n + 4).min(area.height);
+    let h = (n + 3).min(area.height);
     let popup = Rect {
         x: area.x + (area.width - w) / 2,
         y: area.y + (area.height - h) / 2,
@@ -525,7 +603,12 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
         .border_style(Style::new().fg(Color::Yellow));
     if max_scroll > 0 {
         let end = (scroll + visible).min(lines.len());
-        block = block.title_bottom(format!(" j/k scroll · {}-{} of {} ", scroll + 1, end, lines.len()));
+        block = block.title_bottom(format!(
+            " j/k scroll · {}-{} of {} ",
+            scroll + 1,
+            end,
+            lines.len()
+        ));
     }
 
     let shown: Vec<Line> = lines.into_iter().skip(scroll).take(visible).collect();
@@ -543,14 +626,20 @@ mod tests {
     use std::sync::mpsc;
 
     fn text(term: &Terminal<TestBackend>) -> String {
-        term.backend().buffer().content().iter().map(|c| c.symbol()).collect()
+        term.backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect()
     }
 
     #[test]
     fn open_playlist_renders() {
-        let dir = std::env::temp_dir().join(format!("drift-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("drift-ui-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("XDG_CONFIG_HOME", &dir);
+        std::env::set_var("XDG_STATE_HOME", &dir);
 
         let (tx, _rx) = mpsc::channel();
         let mut app = App::new(tx);
@@ -562,7 +651,13 @@ mod tests {
             duration: Some(90),
         };
         app.store.playlists.insert("empty".into(), vec![]);
-        app.store.playlists.insert("mix".into(), vec![t("aaaaaaaaaaa", "First Song"), t("bbbbbbbbbbb", "Second Song")]);
+        app.store.playlists.insert(
+            "mix".into(),
+            vec![
+                t("aaaaaaaaaaa", "First Song"),
+                t("bbbbbbbbbbb", "Second Song"),
+            ],
+        );
         let key = |app: &mut App, c| app.on_key(KeyEvent::new(c, KeyModifiers::NONE));
 
         let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
@@ -598,5 +693,6 @@ mod tests {
         narrow.draw(|f| draw(f, &mut app)).unwrap();
         key(&mut app, KeyCode::Char('q'));
 
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

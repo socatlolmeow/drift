@@ -1,10 +1,11 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::model::{is_valid_id, Track};
+use crate::store::write_atomic;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -27,8 +28,12 @@ impl Session {
     }
 
     pub fn load() -> Session {
-        let Ok(path) = Self::path() else { return Session::default() };
-        let Ok(text) = fs::read_to_string(&path) else { return Session::default() };
+        let Ok(path) = Self::path() else {
+            return Session::default();
+        };
+        let Ok(text) = fs::read_to_string(&path) else {
+            return Session::default();
+        };
         match serde_json::from_str::<Session>(&text) {
             Ok(mut s) => {
                 s.sanitize();
@@ -58,14 +63,7 @@ impl Session {
     }
 
     pub fn write(text: &str) -> Result<()> {
-        let path = Self::path()?;
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))?;
-        Ok(())
+        write_atomic(&Self::path()?, text)
     }
 }
 
@@ -74,25 +72,37 @@ mod tests {
     use super::*;
 
     fn track(id: &str) -> Track {
-        Track { id: id.into(), title: "T".into(), artist: "A".into(), album: None, duration: Some(200) }
+        Track {
+            id: id.into(),
+            title: "T".into(),
+            artist: "A".into(),
+            album: None,
+            duration: Some(200),
+        }
     }
 
     #[test]
-    fn roundtrip_and_sanitize() {
-        let s = Session {
+    fn sanitize_drops_bad_tracks_and_clamps() {
+        let mut s = Session {
             queue: vec![track("aaaaaaaaaaa"), track("bad")],
             current: Some(7),
             position: f64::NAN,
         };
-        let mut back: Session = serde_json::from_str(&s.render().unwrap().replace("NaN", "null")).unwrap_or_default();
-        back.queue = s.queue.clone();
-        back.current = s.current;
-        back.position = s.position;
-        back.sanitize();
-        assert_eq!((back.queue.len(), back.current, back.position), (1, Some(0), 0.0));
+        s.sanitize();
+        assert_eq!((s.queue.len(), s.current, s.position), (1, Some(0), 0.0));
+    }
 
-        let ok = Session { queue: vec![track("aaaaaaaaaaa")], current: Some(0), position: 42.5 };
+    #[test]
+    fn roundtrip() {
+        let ok = Session {
+            queue: vec![track("aaaaaaaaaaa")],
+            current: Some(0),
+            position: 42.5,
+        };
         let again: Session = serde_json::from_str(&ok.render().unwrap()).unwrap();
-        assert_eq!((again.current, again.position, again.queue), (Some(0), 42.5, ok.queue));
+        assert_eq!(
+            (again.current, again.position, again.queue),
+            (Some(0), 42.5, ok.queue)
+        );
     }
 }

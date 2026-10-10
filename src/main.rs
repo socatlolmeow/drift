@@ -49,8 +49,14 @@ fn tool_version(name: &str) -> Option<String> {
 fn missing_dependencies(verbose: bool) -> Vec<String> {
     let mut missing = Vec::new();
     for (tool, hint) in [
-        ("mpv", "sudo apt install mpv | brew install mpv | sudo pacman -S mpv"),
-        ("yt-dlp", "pipx install yt-dlp | brew install yt-dlp | sudo pacman -S yt-dlp"),
+        (
+            "mpv",
+            "sudo apt install mpv | brew install mpv | sudo pacman -S mpv",
+        ),
+        (
+            "yt-dlp",
+            "pipx install yt-dlp | brew install yt-dlp | sudo pacman -S yt-dlp",
+        ),
     ] {
         match tool_version(tool) {
             Some(v) => {
@@ -122,7 +128,7 @@ fn run(initial_query: Option<String>) -> Result<()> {
         app.run_command(&format!("search {q}"));
     }
 
-    let mut terminal = ratatui::init();
+    let mut terminal = ratatui::try_init()?;
     let result = event_loop(&mut terminal, &mut app, &rx);
     ratatui::restore();
     app.shutdown();

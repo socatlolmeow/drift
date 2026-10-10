@@ -24,7 +24,9 @@ impl Track {
 pub fn split_artists(credit: &str) -> Vec<String> {
     const MARK: char = '\u{1}';
     let mut s = credit.to_string();
-    for sep in [" & ", ", ", " feat. ", " Feat. ", " feat ", " ft. ", " Ft. ", " × "] {
+    for sep in [
+        " & ", ", ", " feat. ", " Feat. ", " feat ", " ft. ", " Ft. ", " × ",
+    ] {
         s = s.replace(sep, &MARK.to_string());
     }
     let mut out: Vec<String> = Vec::new();
@@ -52,7 +54,7 @@ pub fn parse_clock(s: &str) -> Option<f64> {
     let mut total = 0.0;
     for part in s.split(':') {
         let v: f64 = part.trim().parse().ok()?;
-        if v < 0.0 {
+        if !v.is_finite() || v < 0.0 {
             return None;
         }
         total = total * 60.0 + v;
@@ -61,7 +63,11 @@ pub fn parse_clock(s: &str) -> Option<f64> {
 }
 
 pub fn fmt_time(secs: f64) -> String {
-    let s = if secs.is_finite() { secs.max(0.0) as u64 } else { 0 };
+    let s = if secs.is_finite() {
+        secs.max(0.0) as u64
+    } else {
+        0
+    };
     let (h, m, s) = (s / 3600, (s % 3600) / 60, s % 60);
     if h > 0 {
         format!("{h}:{m:02}:{s:02}")
@@ -104,8 +110,10 @@ mod tests {
     fn clock_parsing() {
         assert_eq!(parse_clock("3:45"), Some(225.0));
         assert_eq!(parse_clock("1:02:03"), Some(3723.0));
-        assert_eq!(parse_clock("90"), Some(5400.0 / 60.0));
+        assert_eq!(parse_clock("90"), Some(90.0));
         assert_eq!(parse_clock("abc"), None);
+        assert_eq!(parse_clock("NaN"), None);
+        assert_eq!(parse_clock("inf"), None);
         assert_eq!(fmt_time(225.0), "3:45");
         assert_eq!(fmt_time(3723.0), "1:02:03");
     }

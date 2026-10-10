@@ -15,7 +15,7 @@ use crate::store::Store;
 use crate::ytmusic;
 
 pub enum AppEvent {
-    Player(PlayerEvent),
+    Player(u64, PlayerEvent),
     Results {
         id: u64,
         title: String,
@@ -105,6 +105,7 @@ pub struct App {
     on_radio: bool,
     seek_step: f64,
     volume_step: f64,
+    autoplay: bool,
     resume: Option<(String, f64)>,
     saved: String,
     save_failed: bool,
@@ -116,6 +117,7 @@ pub struct App {
 
     search_id: u64,
     player: Option<Player>,
+    player_gen: u64,
     tx: Sender<AppEvent>,
     rng: u64,
 }
@@ -164,6 +166,7 @@ impl App {
             on_radio: false,
             seek_step: p.seek_step,
             volume_step: p.volume_step,
+            autoplay: p.autoplay,
             resume: None,
             saved: String::new(),
             save_failed: false,
@@ -173,6 +176,7 @@ impl App {
             should_quit: false,
             search_id: 0,
             player: None,
+            player_gen: 0,
             tx,
             rng: seed,
         };
@@ -226,13 +230,17 @@ impl App {
     }
 
     fn set_status(&mut self, text: String, level: Level) {
-        self.status = Some(Status { text, level, at: Instant::now() });
+        self.status = Some(Status {
+            text,
+            level,
+            at: Instant::now(),
+        });
     }
 
     pub fn visible_status(&self) -> Option<&Status> {
-        self.status.as_ref().filter(|s| {
-            s.at.elapsed().as_secs() < if s.level == Level::Error { 12 } else { 6 }
-        })
+        self.status
+            .as_ref()
+            .filter(|s| s.at.elapsed().as_secs() < if s.level == Level::Error { 12 } else { 6 })
     }
 
     pub fn on_tick(&mut self) {
@@ -259,11 +267,17 @@ impl App {
 
     pub fn in_playlist(&self) -> bool {
         self.view == View::Playlists
-            && self.open.as_ref().is_some_and(|n| self.store.playlists.contains_key(n))
+            && self
+                .open
+                .as_ref()
+                .is_some_and(|n| self.store.playlists.contains_key(n))
     }
 
     pub fn open_len(&self) -> usize {
-        self.open.as_ref().and_then(|n| self.store.playlists.get(n)).map_or(0, |t| t.len())
+        self.open
+            .as_ref()
+            .and_then(|n| self.store.playlists.get(n))
+            .map_or(0, |t| t.len())
     }
 
     fn cur_len(&self) -> usize {
@@ -411,8 +425,12 @@ impl App {
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('n') | KeyCode::Char('>') => self.next(),
             KeyCode::Char('N') | KeyCode::Char('<') => self.prev(),
-            KeyCode::Char('h') | KeyCode::Left => self.seek(Amount::Delta(-self.seek_step * times as f64)),
-            KeyCode::Char('l') | KeyCode::Right => self.seek(Amount::Delta(self.seek_step * times as f64)),
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.seek(Amount::Delta(-self.seek_step * times as f64))
+            }
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.seek(Amount::Delta(self.seek_step * times as f64))
+            }
             KeyCode::Char('+') | KeyCode::Char('=') => {
                 self.set_volume(Amount::Delta(self.volume_step * times as f64))
             }
@@ -562,7 +580,7 @@ impl App {
             Command::Search(q) => self.start_search(q),
             Command::Play(None) => self.play_default(),
             Command::Play(Some(n)) => {
-                let len = self.len_of(self.view);
+                let len = self.cur_len();
                 if n > len {
                     self.error(format!("no row {n} (only {len} here)"));
                 } else {
@@ -584,10 +602,12 @@ impl App {
             },
             Command::AddAll => self.add_all_results(),
             Command::PlayAll => self.play_all_results(),
-            Command::Remove(n) => {
-                let i = n.map_or(self.selected(), |n| n - 1);
+            Command::Remove(Some(n)) => self.remove_from_queue(n - 1),
+            Command::Remove(None) if self.view == View::Queue => {
+                let i = self.selected();
                 self.remove_from_queue(i);
             }
+            Command::Remove(None) => self.error("Open the queue or give a row number: :remove N"),
             Command::Clear => self.clear_queue(),
             Command::ShowResults => self.set_view(View::Results),
             Command::ShowQueue => self.set_view(View::Queue),
@@ -660,7 +680,9 @@ impl App {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => self.close_artist_pick(),
-            KeyCode::Char('j') | KeyCode::Down => self.artist_sel = (self.artist_sel + 1).min(len - 1),
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.artist_sel = (self.artist_sel + 1).min(len - 1)
+            }
             KeyCode::Char('k') | KeyCode::Up => self.artist_sel = self.artist_sel.saturating_sub(1),
             KeyCode::Char(c @ '1'..='9') => {
                 let i = c as usize - '1' as usize;
@@ -698,22 +720,28 @@ impl App {
                 .into_iter()
                 .filter(|t| {
                     t.artist.to_lowercase() == wanted
-                        || split_artists(&t.artist).iter().any(|a| a.to_lowercase() == wanted)
+                        || split_artists(&t.artist)
+                            .iter()
+                            .any(|a| a.to_lowercase() == wanted)
                 })
                 .collect())
         });
     }
 
     fn start_search(&mut self, query: String) {
-        self.spawn_loader(format!("Search: {query}"), format!("Searching \u{201c}{query}\u{201d}"), move || {
-            ytmusic::search(&query)
-        });
+        self.spawn_loader(
+            format!("Search: {query}"),
+            format!("Searching \u{201c}{query}\u{201d}"),
+            move || ytmusic::search(&query),
+        );
     }
 
     fn start_import(&mut self, url: String) {
-        self.spawn_loader("Imported playlist".into(), "Importing playlist".into(), move || {
-            ytmusic::import(&url)
-        });
+        self.spawn_loader(
+            "Imported playlist".into(),
+            "Importing playlist".into(),
+            move || ytmusic::import(&url),
+        );
     }
 
     fn spawn_loader<F>(&mut self, title: String, busy: String, work: F)
@@ -750,7 +778,11 @@ impl App {
                     Err(e) => self.error(e),
                 }
             }
-            AppEvent::Player(pe) => self.on_player(pe),
+            AppEvent::Player(generation, pe) => {
+                if generation == self.player_gen {
+                    self.on_player(pe);
+                }
+            }
         }
     }
 
@@ -761,9 +793,11 @@ impl App {
             }
         }
         if self.player.is_none() {
+            self.player_gen += 1;
+            let generation = self.player_gen;
             let tx = self.tx.clone();
             let p = Player::spawn(self.volume, move |ev| {
-                let _ = tx.send(AppEvent::Player(ev));
+                let _ = tx.send(AppEvent::Player(generation, ev));
             })?;
             self.player = Some(p);
         }
@@ -819,7 +853,9 @@ impl App {
                         "Playback failed 3 times in a row ({msg}). Update yt-dlp: yt-dlp -U"
                     ));
                 } else {
-                    self.error(format!("Can't play \u{201c}{name}\u{201d} ({msg}) — skipping"));
+                    self.error(format!(
+                        "Can't play \u{201c}{name}\u{201d} ({msg}) — skipping"
+                    ));
                     self.advance(true);
                 }
             }
@@ -838,7 +874,9 @@ impl App {
     }
 
     fn start_track(&mut self, i: usize, keep_resume: bool) {
-        let Some(track) = self.queue.get(i).cloned() else { return };
+        let Some(track) = self.queue.get(i).cloned() else {
+            return;
+        };
         if !keep_resume {
             self.resume = None;
         }
@@ -929,7 +967,9 @@ impl App {
     }
 
     fn play_radio(&mut self, i: usize) {
-        let Some(track) = self.radio.get(i).cloned() else { return };
+        let Some(track) = self.radio.get(i).cloned() else {
+            return;
+        };
         self.on_radio = true;
         self.result_cursor = Some(i);
         self.resume = None;
@@ -954,7 +994,11 @@ impl App {
         }
         match self.with_player(|p| p.set_pause(pause)) {
             Ok(()) => {
-                self.play_state = if pause { PlayState::Paused } else { PlayState::Playing };
+                self.play_state = if pause {
+                    PlayState::Paused
+                } else {
+                    PlayState::Playing
+                };
             }
             Err(e) => self.error(format!("{e:#}")),
         }
@@ -1062,7 +1106,11 @@ impl App {
     }
 
     fn advance_radio(&mut self, auto: bool) {
-        let next = self.result_cursor.map(|c| c + 1).filter(|&i| i < self.radio.len());
+        let next = self
+            .result_cursor
+            .filter(|_| self.on_radio || self.autoplay)
+            .map(|c| c + 1)
+            .filter(|&i| i < self.radio.len());
         match next {
             Some(i) => self.play_radio(i),
             None if auto => {
@@ -1114,7 +1162,10 @@ impl App {
         if let Some(c) = self.current {
             self.played.insert(c);
         }
-        self.info(format!("Shuffle: {}", if self.shuffle { "on" } else { "off" }));
+        self.info(format!(
+            "Shuffle: {}",
+            if self.shuffle { "on" } else { "off" }
+        ));
     }
 
     fn cycle_repeat(&mut self) {
@@ -1168,7 +1219,11 @@ impl App {
         if self.results.is_empty() {
             return self.error("No results to play");
         }
-        let start = if self.view == View::Results { self.selected() } else { 0 };
+        let start = if self.view == View::Results {
+            self.selected()
+        } else {
+            0
+        };
         self.queue = self.results.clone();
         self.played.clear();
         self.current = None;
@@ -1211,7 +1266,11 @@ impl App {
         }
         let sel = self.states[View::Queue.idx()].selected().unwrap_or(0);
         let len = self.queue.len();
-        self.states[View::Queue.idx()].select(if len == 0 { None } else { Some(sel.min(len - 1)) });
+        self.states[View::Queue.idx()].select(if len == 0 {
+            None
+        } else {
+            Some(sel.min(len - 1))
+        });
         self.info(format!("Removed: {}", removed.label()));
     }
 
@@ -1240,8 +1299,14 @@ impl App {
         match self.view {
             View::Queue => self.remove_from_queue(i),
             View::Playlists if self.in_playlist() => self.remove_playlist_track(i),
-            View::Playlists => if let Some(n) = self.playlist_name(i) { self.delete_playlist(&n) },
-            View::Results => self.info("Results can't be deleted — they are replaced by the next search"),
+            View::Playlists => {
+                if let Some(n) = self.playlist_name(i) {
+                    self.delete_playlist(&n)
+                }
+            }
+            View::Results => {
+                self.info("Results can't be deleted — they are replaced by the next search")
+            }
         }
     }
 
@@ -1260,9 +1325,13 @@ impl App {
             return self.error("Queue is empty — nothing to save");
         }
         let n = self.queue.len();
-        self.store.playlists.insert(name.to_string(), self.queue.clone());
+        self.store
+            .playlists
+            .insert(name.to_string(), self.queue.clone());
         if self.persist() {
-            self.info(format!("Saved {n} tracks to playlist \u{201c}{name}\u{201d}"));
+            self.info(format!(
+                "Saved {n} tracks to playlist \u{201c}{name}\u{201d}"
+            ));
         }
     }
 
@@ -1308,10 +1377,14 @@ impl App {
             self.result_cursor = None;
             self.states[View::Queue.idx()].select(Some(0));
             self.play_index(0);
-            self.info(format!("Playing playlist \u{201c}{name}\u{201d} ({n} tracks)"));
+            self.info(format!(
+                "Playing playlist \u{201c}{name}\u{201d} ({n} tracks)"
+            ));
         } else {
             self.queue.extend(tracks);
-            self.info(format!("Appended \u{201c}{name}\u{201d} ({n} tracks) to the queue"));
+            self.info(format!(
+                "Appended \u{201c}{name}\u{201d} ({n} tracks) to the queue"
+            ));
         }
     }
 
@@ -1345,9 +1418,13 @@ impl App {
     }
 
     fn remove_playlist_track(&mut self, i: usize) {
-        let Some(name) = self.open.clone() else { return };
+        let Some(name) = self.open.clone() else {
+            return;
+        };
         let removed = {
-            let Some(list) = self.store.playlists.get_mut(&name) else { return };
+            let Some(list) = self.store.playlists.get_mut(&name) else {
+                return;
+            };
             if i >= list.len() {
                 None
             } else {
@@ -1358,9 +1435,13 @@ impl App {
         let Some((track, len)) = removed else {
             return self.error("No track selected");
         };
-        self.pl_state.select(if len == 0 { None } else { Some(i.min(len - 1)) });
+        self.pl_state
+            .select(if len == 0 { None } else { Some(i.min(len - 1)) });
         if self.persist() {
-            self.info(format!("Removed from \u{201c}{name}\u{201d}: {}", track.label()));
+            self.info(format!(
+                "Removed from \u{201c}{name}\u{201d}: {}",
+                track.label()
+            ));
         }
     }
 
@@ -1372,7 +1453,9 @@ impl App {
     }
 
     fn move_playlist_track(&mut self, dir: isize) {
-        let Some(name) = self.open.clone() else { return };
+        let Some(name) = self.open.clone() else {
+            return;
+        };
         let i = self.selected();
         let j = i as isize + dir;
         let moved = match self.store.playlists.get_mut(&name) {
@@ -1447,9 +1530,15 @@ mod tests {
         let mut app = App::new(tx);
         app.store.playlists.insert(
             "mix".into(),
-            vec![track("aaaaaaaaaaa", "A"), track("bbbbbbbbbbb", "B"), track("ccccccccccc", "C")],
+            vec![
+                track("aaaaaaaaaaa", "A"),
+                track("bbbbbbbbbbb", "B"),
+                track("ccccccccccc", "C"),
+            ],
         );
-        app.store.playlists.insert("other".into(), vec![track("ddddddddddd", "D")]);
+        app.store
+            .playlists
+            .insert("other".into(), vec![track("ddddddddddd", "D")]);
 
         press(&mut app, KeyCode::Tab);
         press(&mut app, KeyCode::Tab);
@@ -1468,12 +1557,18 @@ mod tests {
         assert_eq!(app.selected(), 2);
 
         press(&mut app, KeyCode::Char('K'));
-        let ids: Vec<&str> = app.store.playlists["mix"].iter().map(|t| t.id.as_str()).collect();
+        let ids: Vec<&str> = app.store.playlists["mix"]
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect();
         assert_eq!(ids, ["aaaaaaaaaaa", "ccccccccccc", "bbbbbbbbbbb"]);
         assert_eq!(app.selected(), 1);
 
         press(&mut app, KeyCode::Char('x'));
-        let ids: Vec<&str> = app.store.playlists["mix"].iter().map(|t| t.id.as_str()).collect();
+        let ids: Vec<&str> = app.store.playlists["mix"]
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect();
         assert_eq!(ids, ["aaaaaaaaaaa", "bbbbbbbbbbb"]);
         assert_eq!(app.selected(), 1);
 
@@ -1503,6 +1598,9 @@ mod tests {
         assert_eq!(app.open, None);
 
         check_artist_popup(&mut app);
+
+        app.run_command("remove");
+        assert_eq!(app.queue.len(), 1);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

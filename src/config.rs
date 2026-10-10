@@ -1,12 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Deserialize;
 
 use crate::model::{RepeatMode, Track};
 use crate::session::Session;
-use crate::store::Store;
+use crate::store::{write_atomic, Store};
 
 #[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(default)]
@@ -56,14 +56,14 @@ pub struct Config {
 
 impl Config {
     fn path() -> Result<PathBuf> {
-        Ok(Store::path()?.with_file_name("config.toml"))
+        Ok(Store::dir()?.join("config.toml"))
     }
 
     pub fn render(p: &Playback) -> String {
         format!(
             "\
-# Drift settings. Drift only read this file and never rewrites it, so your
-# comments are safe. Restart drift after editing
+# Drift settings. Drift only reads this file and never rewrites it, so your
+# comments are safe. Restart drift after editing.
 
 [playback]
 volume = {volume}
@@ -85,14 +85,7 @@ volume_step = {vstep:?}
     }
 
     fn write(text: &str) -> Result<()> {
-        let path = Self::path()?;
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        }
-        let tmp = path.with_extension("toml.tmp");
-        fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, &path).with_context(|| format!("replacing {}", path.display()))?;
-        Ok(())
+        write_atomic(&Self::path()?, text)
     }
 
     pub fn load() -> (Config, Option<String>) {
@@ -106,7 +99,10 @@ volume_step = {vstep:?}
                 return (Config::default(), None);
             }
             Err(e) => {
-                return (Config::default(), Some(format!("cannot read {}: {e}", path.display())))
+                return (
+                    Config::default(),
+                    Some(format!("cannot read {}: {e}", path.display())),
+                )
             }
         };
         match toml::from_str::<Config>(&text) {
@@ -144,12 +140,20 @@ pub fn migrate_legacy() {
     }
 
     let Ok(path) = Config::path() else { return };
-    let Ok(text) = fs::read_to_string(&path) else { return };
-    let Ok(table) = text.parse::<toml::Table>() else { return };
-    if table.contains_key("playback") || !(table.contains_key("queue") || table.contains_key("position")) {
+    let Ok(text) = fs::read_to_string(&path) else {
+        return;
+    };
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return;
+    };
+    if table.contains_key("playback")
+        || !(table.contains_key("queue") || table.contains_key("position"))
+    {
         return;
     }
-    let Ok(old) = toml::from_str::<Legacy>(&text) else { return };
+    let Ok(old) = toml::from_str::<Legacy>(&text) else {
+        return;
+    };
 
     let d = Playback::default();
     let mut p = Playback {
@@ -160,7 +164,11 @@ pub fn migrate_legacy() {
         ..d
     };
     p.sanitize();
-    let session = Session { queue: old.queue, current: old.current, position: old.position };
+    let session = Session {
+        queue: old.queue,
+        current: old.current,
+        position: old.position,
+    };
     if let Ok(s) = session.render() {
         if !Session::exists() {
             let _ = Session::write(&s);
@@ -190,14 +198,22 @@ mod tests {
         assert_eq!(c.playback.volume, 80);
         let c: Config =
             toml::from_str("[playback]\nvolume = 10\nrepeat = \"one\"\nseek_step = 10").unwrap();
-        assert_eq!((c.playback.volume, c.playback.repeat), (10, RepeatMode::One));
+        assert_eq!(
+            (c.playback.volume, c.playback.repeat),
+            (10, RepeatMode::One)
+        );
         assert_eq!(c.playback.seek_step, 10.0);
         assert!(toml::from_str::<Config>("[playback]\nrepeat = \"sometimes\"").is_err());
     }
 
     #[test]
     fn sanitize_bad_values() {
-        let mut p = Playback { volume: 250, seek_step: -3.0, volume_step: 900.0, ..Playback::default() };
+        let mut p = Playback {
+            volume: 250,
+            seek_step: -3.0,
+            volume_step: 900.0,
+            ..Playback::default()
+        };
         p.sanitize();
         assert_eq!((p.volume, p.seek_step, p.volume_step), (100, 5.0, 100.0));
     }

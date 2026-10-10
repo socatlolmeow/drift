@@ -40,9 +40,35 @@ pub enum Command {
 }
 
 pub const COMMAND_NAMES: &[&str] = &[
-    "search", "play", "pause", "resume", "toggle", "stop", "next", "prev", "quit", "add",
-    "addall", "playall", "remove", "clear", "results", "queue", "playlists", "volume", "seek",
-    "shuffle", "repeat", "save", "load", "append", "delpl", "addto", "import", "artist", "help",
+    "search",
+    "play",
+    "pause",
+    "resume",
+    "toggle",
+    "stop",
+    "next",
+    "prev",
+    "quit",
+    "add",
+    "addall",
+    "playall",
+    "remove",
+    "clear",
+    "results",
+    "queue",
+    "playlists",
+    "volume",
+    "seek",
+    "shuffle",
+    "repeat",
+    "save",
+    "load",
+    "append",
+    "delpl",
+    "addto",
+    "import",
+    "artist",
+    "help",
 ];
 
 fn unquote(s: &str) -> &str {
@@ -61,7 +87,9 @@ fn index_arg(arg: &str, cmd: &str) -> Result<Option<usize>, String> {
     }
     match arg.parse::<usize>() {
         Ok(n) if n >= 1 => Ok(Some(n)),
-        _ => Err(format!(":{cmd} expects a row number (1, 2, 3 …), got '{arg}'")),
+        _ => Err(format!(
+            ":{cmd} expects a row number (1, 2, 3 …), got '{arg}'"
+        )),
     }
 }
 
@@ -159,9 +187,18 @@ mod tests {
 
     #[test]
     fn search_variants() {
-        assert_eq!(parse(r#"search "daft punk""#), Ok(Some(Command::Search("daft punk".into()))));
-        assert_eq!(parse(":search daft punk"), Ok(Some(Command::Search("daft punk".into()))));
-        assert_eq!(parse(r#"s"lofi beats""#), Ok(Some(Command::Search("lofi beats".into()))));
+        assert_eq!(
+            parse(r#"search "daft punk""#),
+            Ok(Some(Command::Search("daft punk".into())))
+        );
+        assert_eq!(
+            parse(":search daft punk"),
+            Ok(Some(Command::Search("daft punk".into())))
+        );
+        assert_eq!(
+            parse(r#"s"lofi beats""#),
+            Ok(Some(Command::Search("lofi beats".into())))
+        );
         assert!(parse("search").is_err());
     }
 
@@ -178,10 +215,22 @@ mod tests {
 
     #[test]
     fn amounts() {
-        assert_eq!(parse("vol 50"), Ok(Some(Command::Volume(Amount::Abs(50.0)))));
-        assert_eq!(parse("vol -10"), Ok(Some(Command::Volume(Amount::Delta(-10.0)))));
-        assert_eq!(parse("seek 1:30"), Ok(Some(Command::Seek(Amount::Abs(90.0)))));
-        assert_eq!(parse("seek +15"), Ok(Some(Command::Seek(Amount::Delta(15.0)))));
+        assert_eq!(
+            parse("vol 50"),
+            Ok(Some(Command::Volume(Amount::Abs(50.0))))
+        );
+        assert_eq!(
+            parse("vol -10"),
+            Ok(Some(Command::Volume(Amount::Delta(-10.0))))
+        );
+        assert_eq!(
+            parse("seek 1:30"),
+            Ok(Some(Command::Seek(Amount::Abs(90.0))))
+        );
+        assert_eq!(
+            parse("seek +15"),
+            Ok(Some(Command::Seek(Amount::Delta(15.0))))
+        );
         assert!(parse("vol loud").is_err());
     }
 
@@ -193,7 +242,10 @@ mod tests {
 
     #[test]
     fn playlists() {
-        assert_eq!(parse(r#"save "my mix""#), Ok(Some(Command::Save("my mix".into()))));
+        assert_eq!(
+            parse(r#"save "my mix""#),
+            Ok(Some(Command::Save("my mix".into())))
+        );
         assert!(parse("save").is_err());
     }
 }
