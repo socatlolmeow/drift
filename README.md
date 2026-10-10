@@ -50,23 +50,20 @@ sudo pacman -S mpv yt-dlp
 ```bash
 git clone https://github.com/socatlolmeow/drift.git
 cd drift
-sudo make install
+cargo build --release
 ```
 
-This installs `drift` to `/usr/local/bin`. To install to `/usr/bin` instead:
+Then copy the binary to somewhere on your `$PATH`:
 ```bash
-sudo make install PREFIX=/usr
+sudo cp target/release/drift /usr/local/bin/
 ```
 
-### Other make targets
+Or install directly with cargo:
+```bash
+cargo install --path .
+```
 
-| Command | Description |
-|---|---|
-| `make` | Build (debug skipped, release only) |
-| `make build` | Same as above |
-| `sudo make install` | Build and install to `$PREFIX/bin` |
-| `sudo make uninstall` | Remove the installed binary |
-| `make clean` | Remove build artifacts |
+This installs `drift` to `~/.cargo/bin/`, which is on your `$PATH` if you installed Rust via [rustup](https://rustup.rs/).
 
 ---
 
