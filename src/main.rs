@@ -19,7 +19,7 @@ use ratatui::DefaultTerminal;
 use app::{App, AppEvent};
 
 const USAGE: &str = "\
-drift — Vim-style terminal player for YouTube Music (no login needed)
+drift - vim-style terminal player for YouTube Music (no login needed)
 
 USAGE:
     drift [QUERY...]      start the player, optionally running a search first
