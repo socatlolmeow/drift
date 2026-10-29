@@ -9,7 +9,7 @@ use ratatui::widgets::TableState;
 use crate::command::{self, Amount, Command, COMMAND_NAMES};
 use crate::config::{self, Config};
 use crate::lyrics::{self, Lyrics};
-use crate::model::{Collection, RepeatMode, Track};
+use crate::model::{split_artists, Collection, RepeatMode, Track};
 use crate::discord::Discord;
 use crate::mpris::{Cmd, Mpris};
 use crate::player::{self, Player, PlayerEvent};
@@ -36,6 +36,10 @@ pub enum AppEvent {
         id: u64,
         title: String,
         result: Result<Vec<Collection>, String>,
+    },
+    SavePlaylist {
+        name: String,
+        result: Result<Vec<Track>, String>,
     },
     Media(Cmd),
     Audio {
@@ -114,6 +118,9 @@ pub enum MenuAction {
     Artist,
     Similar,
     Album,
+    SaveTrackAlbum,
+    SaveAlbum,
+    SaveResults,
     PlaylistMenu,
     PickPlaylist(String),
     NewPlaylist,
@@ -543,6 +550,7 @@ impl App {
                     ('g', 'a') => self.go_to_artist(),
                     ('g', 's') => self.go_similar(),
                     ('g', 'b') => self.go_album(),
+                    ('g', 'B') => self.save_album(None),
                     _ => {}
                 }
             }
@@ -688,6 +696,7 @@ impl App {
             items.push(menu_item('s', "Similar songs", MenuAction::Similar));
             if track.album.is_some() {
                 items.push(menu_item('b', "Show album", MenuAction::Album));
+                items.push(menu_item('B', "Save album to playlist", MenuAction::SaveTrackAlbum));
             }
             items.push(menu_item('l', "Add to playlist…", MenuAction::PlaylistMenu));
             if in_queue {
@@ -699,6 +708,11 @@ impl App {
             if self.view == View::Results {
                 items.push(menu_item('Q', "Queue all results", MenuAction::QueueAll));
                 items.push(menu_item('P', "Play all results", MenuAction::PlayAll));
+                if self.results_title.starts_with("Album: ") {
+                    items.push(menu_item('S', "Save album as playlist…", MenuAction::SaveAlbum));
+                } else {
+                    items.push(menu_item('S', "Save results as playlist…", MenuAction::SaveResults));
+                }
             }
             if in_queue {
                 items.push(menu_item('c', "Clear queue", MenuAction::ClearQueue));
@@ -806,6 +820,21 @@ impl App {
             MenuAction::Artist => self.go_to_artist(),
             MenuAction::Similar => self.go_similar(),
             MenuAction::Album => self.go_album(),
+            MenuAction::SaveTrackAlbum => {
+                if let Some(t) = track {
+                    let album_title = t.album.clone().unwrap_or_else(|| "Album".to_string());
+                    self.save_album_background(t, album_title);
+                }
+            }
+            MenuAction::SaveAlbum => {
+                let default_name = self.results_title.strip_prefix("Album: ").unwrap_or("").trim();
+                if !default_name.is_empty() {
+                    self.prefill_command(&format!("savealbum \"{default_name}\""));
+                } else {
+                    self.prefill_command("savealbum ");
+                }
+            }
+            MenuAction::SaveResults => self.prefill_command("saveresults "),
             MenuAction::PlaylistMenu => {}
             MenuAction::PickPlaylist(name) => self.add_to_playlist(&name),
             MenuAction::NewPlaylist => self.prefill_command("addto "),
@@ -1134,6 +1163,8 @@ impl App {
             }
             Command::Save(name) => self.save_playlist(&name, false),
             Command::SaveForce(name) => self.save_playlist(&name, true),
+            Command::SaveAlbum(name) => self.save_album(name),
+            Command::SaveResults(name) => self.save_results_as_playlist(name),
             Command::Load(name) => match self.store.resolve(&name) {
                 Some(n) => self.load_playlist(&n, true),
                 None => self.error(format!("no playlist named '{name}'")),
@@ -1283,6 +1314,56 @@ impl App {
         });
     }
 
+    fn save_album(&mut self, name: Option<String>) {
+        if self.view == View::Results
+            && self.results_title.starts_with("Album: ")
+            && !self.results.is_empty()
+        {
+            return self.save_results_as_playlist(name);
+        }
+
+        if let Some(track) = self.artist_target() {
+            if let Some(album) = track.album.clone() {
+                let target_name = name.unwrap_or(album);
+                return self.save_album_background(track, target_name);
+            }
+        }
+
+        if self.view == View::Results && !self.results.is_empty() {
+            return self.save_results_as_playlist(name);
+        }
+
+        self.error("No album to save — open an album or select a song with an album");
+    }
+
+    fn save_album_background(&mut self, track: Track, target_name: String) {
+        let Some(album) = track.album else {
+            return self.error("No album known for this song");
+        };
+        let artist = split_artists(&track.artist)
+            .into_iter()
+            .next()
+            .unwrap_or_default();
+        self.busy = Some(format!("Saving album \u{201c}{album}\u{201d}"));
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<Vec<Track>, String> {
+                let found = ytmusic::search_collections(&format!("{album} {artist}"), Kind::Album)?;
+                let want = album.to_lowercase();
+                let pick = found
+                    .iter()
+                    .find(|c| c.title.to_lowercase() == want)
+                    .or(found.first())
+                    .ok_or_else(|| "album not found".to_string())?;
+                ytmusic::browse_tracks(&pick.browse_id, &pick.title, &pick.artist)
+            })();
+            let _ = tx.send(AppEvent::SavePlaylist {
+                name: target_name,
+                result,
+            });
+        });
+    }
+
     fn start_collection_search(&mut self, query: String, kind: Kind) {
         let (what, title) = match kind {
             Kind::Album => ("albums", format!("Albums: {query}")),
@@ -1306,6 +1387,7 @@ impl App {
         }
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => self.close_collection_pick(),
+            KeyCode::Char('s') | KeyCode::Char('S') => self.save_picked_collection(),
             KeyCode::Char('j') | KeyCode::Down => self.pick_sel = (self.pick_sel + 1).min(len - 1),
             KeyCode::Char('k') | KeyCode::Up => self.pick_sel = self.pick_sel.saturating_sub(1),
             KeyCode::Char('g') | KeyCode::Home => self.pick_sel = 0,
@@ -1337,6 +1419,23 @@ impl App {
         let title = format!("{kind}: {}", c.title);
         self.spawn_loader(title, busy, move || {
             ytmusic::browse_tracks(&c.browse_id, &c.title, &c.artist).map(Page::from)
+        });
+    }
+
+    fn save_picked_collection(&mut self) {
+        let c = self.picks.get(self.pick_sel).cloned();
+        self.close_collection_pick();
+        let Some(c) = c else { return };
+        let kind = if c.browse_id.starts_with("VL") { "Playlist" } else { "Album" };
+        let target_name = c.title.clone();
+        self.busy = Some(format!("Saving {kind} \u{201c}{target_name}\u{201d}"));
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = ytmusic::browse_tracks(&c.browse_id, &c.title, &c.artist);
+            let _ = tx.send(AppEvent::SavePlaylist {
+                name: target_name,
+                result,
+            });
         });
     }
 
@@ -1492,6 +1591,29 @@ impl App {
                 }
             }
             AppEvent::Media(cmd) => self.on_media(cmd),
+            AppEvent::SavePlaylist { name, result } => {
+                self.busy = None;
+                match result {
+                    Ok(tracks) if tracks.is_empty() => {
+                        self.error(format!("Album \u{201c}{name}\u{201d} contains no tracks"));
+                    }
+                    Ok(tracks) => {
+                        let n = tracks.len();
+                        let key = self.store.resolve_exact(&name).unwrap_or(name);
+                        self.store.playlists.insert(key.clone(), tracks);
+                        if self.persist() {
+                            self.info(format!(
+                                "Saved {n} tracks to playlist \u{201c}{key}\u{201d}"
+                            ));
+                            let sel = self.selected();
+                            self.set_selected(sel);
+                        }
+                    }
+                    Err(e) => {
+                        self.error(format!("Could not save album \u{201c}{name}\u{201d}: {e}"))
+                    }
+                }
+            }
             AppEvent::Lyrics { id, result } => {
                 if self.lyrics_id.as_deref() != Some(id.as_str()) {
                     return;
@@ -2179,6 +2301,40 @@ impl App {
         }
     }
 
+    fn save_results_as_playlist(&mut self, name: Option<String>) {
+        if self.results.is_empty() {
+            return self.error("No results to save — search or open an album first");
+        }
+        let target_name = match name {
+            Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+            _ => {
+                if let Some(rest) = self.results_title.strip_prefix("Album: ") {
+                    rest.trim().to_string()
+                } else if let Some(rest) = self.results_title.strip_prefix("Playlist: ") {
+                    rest.trim().to_string()
+                } else if let Some(album) = self.results.iter().find_map(|t| t.album.as_deref()) {
+                    album.to_string()
+                } else {
+                    return self.error(
+                        "No album name found; usage: :savealbum <name> or :saveresults <name>",
+                    );
+                }
+            }
+        };
+        let n = self.results.len();
+        let key = self.store.resolve_exact(&target_name).unwrap_or(target_name);
+        self.store
+            .playlists
+            .insert(key.clone(), self.results.clone());
+        if self.persist() {
+            self.info(format!(
+                "Saved {n} tracks to playlist \u{201c}{key}\u{201d}"
+            ));
+            let sel = self.selected();
+            self.set_selected(sel);
+        }
+    }
+
     fn add_to_playlist(&mut self, name: &str) {
         let i = self.selected();
         let track = match self.view {
@@ -2542,6 +2698,46 @@ mod tests {
         assert_eq!(app.queue.len(), 1);
 
         check_playlist_playback(&mut app);
+
+        // Test savealbum and saveresults
+        let mut t1 = track("song1111111", "Dreams");
+        t1.album = Some("Rumours".into());
+        let mut t2 = track("song2222222", "Go Your Own Way");
+        t2.album = Some("Rumours".into());
+        app.results = vec![t1.clone(), t2.clone()];
+        app.results_title = "Album: Rumours".into();
+        app.view = View::Results;
+
+        // :savealbum with no args uses album name from results_title
+        app.run_command("savealbum");
+        assert_eq!(app.store.playlists.get("Rumours").map(Vec::len), Some(2));
+
+        // :savealbum with custom name
+        app.run_command(r#"savealbum "Fleetwood Mac - Rumours""#);
+        assert_eq!(
+            app.store
+                .playlists
+                .get("Fleetwood Mac - Rumours")
+                .map(Vec::len),
+            Some(2)
+        );
+
+        // :saveresults with custom name
+        app.run_command(r#"saveresults "Classic Hits""#);
+        assert_eq!(
+            app.store.playlists.get("Classic Hits").map(Vec::len),
+            Some(2)
+        );
+
+        // Test AppEvent::SavePlaylist background event
+        app.on_event(AppEvent::SavePlaylist {
+            name: "Background Album".into(),
+            result: Ok(vec![track("bg111111111", "BG Track")]),
+        });
+        assert_eq!(
+            app.store.playlists.get("Background Album").map(Vec::len),
+            Some(1)
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }

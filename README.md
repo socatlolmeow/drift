@@ -134,6 +134,7 @@ Press `/` to search, `Enter` to play, `a` to queue and `?` for the full list of 
 | `:shuffle` `:repeat [off\|all\|one]` | playback modes |
 | `:add [N]` `:addall` `:playall` | queue results |
 | `:save name` `:load name` `:append name` | work with playlists |
+| `:savealbum [name]` `:saveresults [name]` | save album or results directly as a playlist |
 | `:addto name` `:delpl name` | add a song to / delete a playlist |
 | `:import URL` | import a YouTube / YouTube Music playlist |
 | `:album [query]` | open the selected song's album, or search albums |

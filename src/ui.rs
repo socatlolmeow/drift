@@ -806,6 +806,8 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("shuffle", "toggle shuffle"),
     ("repeat", "repeat  ·  off | all | one"),
     ("save", "save the queue as a playlist"),
+    ("savealbum", "save album as a playlist  ·  savealbum [name]"),
+    ("saveresults", "save results as a playlist  ·  saveresults [name]"),
     ("load", "load a playlist into the queue"),
     ("append", "append a playlist to the queue"),
     ("delpl", "delete a playlist"),
@@ -1133,6 +1135,14 @@ const HELP: &[(&str, &str)] = &[
         "save the queue as a playlist / load one (:save! n replaces an existing one)",
     ),
     (
+        ":savealbum [n]",
+        "save album or current album results as a playlist",
+    ),
+    (
+        ":saveresults [n]",
+        "save current results as a playlist",
+    ),
+    (
         ":append n  :delpl n",
         "append a playlist to the queue / delete it",
     ),
@@ -1281,7 +1291,10 @@ fn draw_collection_picker(f: &mut Frame, app: &App, area: Rect) {
             }
         })
         .collect();
-    lines.push(Line::styled(" Enter select · j k move · Esc cancel", dim()));
+    lines.push(Line::styled(
+        " Enter select · s save playlist · j k move · Esc cancel",
+        dim(),
+    ));
     f.render_widget(Clear, popup);
     f.render_widget(
         Paragraph::new(lines).block(

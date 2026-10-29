@@ -31,6 +31,8 @@ pub enum Command {
     Repeat(Option<RepeatMode>),
     Save(String),
     SaveForce(String),
+    SaveAlbum(Option<String>),
+    SaveResults(Option<String>),
     Load(String),
     Append(String),
     DeletePlaylist(String),
@@ -67,6 +69,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "shuffle",
     "repeat",
     "save",
+    "savealbum",
+    "saveresults",
     "load",
     "append",
     "delpl",
@@ -174,6 +178,8 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
         },
         "save" | "w" => Save(name_arg(arg, "save")?),
         "save!" | "w!" => SaveForce(name_arg(arg, "save!")?),
+        "savealbum" | "sa" => SaveAlbum((!arg.is_empty()).then(|| arg.to_string())),
+        "saveresults" | "sr" => SaveResults((!arg.is_empty()).then(|| arg.to_string())),
         "load" | "e" => Load(name_arg(arg, "load")?),
         "append" => Append(name_arg(arg, "append")?),
         "delpl" | "deletepl" | "delete" => DeletePlaylist(name_arg(arg, "delpl")?),
@@ -283,6 +289,19 @@ mod tests {
         assert_eq!(
             parse("save! my mix"),
             Ok(Some(Command::SaveForce("my mix".into())))
+        );
+        assert_eq!(parse("savealbum"), Ok(Some(Command::SaveAlbum(None))));
+        assert_eq!(
+            parse(r#"savealbum "Abbey Road""#),
+            Ok(Some(Command::SaveAlbum(Some("Abbey Road".into()))))
+        );
+        assert_eq!(
+            parse("saveresults"),
+            Ok(Some(Command::SaveResults(None)))
+        );
+        assert_eq!(
+            parse(r#"saveresults "My Hits""#),
+            Ok(Some(Command::SaveResults(Some("My Hits".into()))))
         );
     }
 }
