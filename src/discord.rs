@@ -2,7 +2,9 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use discord_rich_presence::activity::{Activity, ActivityType, Assets, Button, Timestamps};
+use discord_rich_presence::activity::{
+    Activity, ActivityType, Assets, Button, StatusDisplayType, Timestamps,
+};
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
 
 use crate::app::PlayState;
@@ -158,6 +160,7 @@ fn send(client: &mut DiscordIpcClient, msg: &Msg) -> bool {
             };
             let mut activity = Activity::new()
                 .activity_type(ActivityType::Listening)
+                .status_display_type(StatusDisplayType::Details)
                 .details(&p.title)
                 .state(&artist)
                 .assets(assets)
