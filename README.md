@@ -22,16 +22,15 @@ Search, queue and play music with no account, no login and no browser.
 
 ## Features
 
-- **No login** - search and stream straight from YouTube Music
 - **Vim-style keybinds** - `j`/`k`, `gg`/`ge`, counts like `5j`, and `:` for the command line
-- **Synced lyrics** - a side panel or fullscreen view with the current line highlighted as it's sung
-- **Playlists & queue** - save, load and reorder playlists, or import any YouTube / YouTube Music playlist by URL
-- **Song menu** - press `G` on a song to play, queue, add to a playlist, jump to the artist or see its info
+- **Synced lyrics** - a side panel or fullscreen view that highlights the current line and fills it in as it's sung
+- **Queue & playlists** - build a queue, save and reorder playlists, or import any YouTube / YouTube Music playlist by URL
+- **Discovery** - press `ga` for an artist's songs, `gs` for similar songs, or use `:album` and `:playlist` to search albums and playlists
+- **Song menu** - press `G` on a song to play it, qeue it, add it to a playlist, jump to the artist or see its info
 - **Command palette** - `:search`, `:seek`, `:vol`, `:import` and more, with completion and history
-- **Artist browsing** - press `ga` to see an artist's songs
-- **Similar songs** - press `gs` to see similar songs
-- **Audio visualizer** - a live visualizer while music plays
-- **Configurable** - volume, seek step, repeat/shuffle defaults and accent color in a single TOML file
+- **Picks up where you left off** - your queue and position are restored the next time you start Drift
+- **Desktop integration** - media keys and `playerctl` on Linux (MPRIS), plus optional Discord rich precense
+- **Configurable** - volume, seek step, shuffle/repeat defaults, accent color and more in a single TOML file
 
 ## Installation
 
