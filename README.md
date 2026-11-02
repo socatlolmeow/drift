@@ -169,8 +169,15 @@ popular_first = false
 accent = "cyan"       # a color name or a hex value like "#FF8800"
 
 [discord]
-client_id = ""        # change this for Discord RPC to work in Drift         
+client_id = ""        # change this for Discord RPC to work in Drift
+
+[audio]
+download = false              # false: stream songs; true: download to the cache first
+download_max_minutes = 15     # with download = true, longer songs are still streamed (0 = no limit)
+cookies_from_browser = ""     # e.g. "firefox" or "chrome"; passed to yt-dlp when YouTube blocks playback
 ```
+
+By default Drift streams songs, so playback starts right away even for hour long tracks. Set `download = true` to cache songs on disk first (this also prefetches the next song). If YouTube asks you to sign in or playback fails, set `cookies_from_browser` to the browser where youre logged into YouTube. If you alr have a `config.toml`, add the `[audio]` section by hand, since Drift never rewrites it.
 
 Set `DRIFT_CONFIG_DIR` or `DRIFT_STATE_DIR` to change where Drift keeps its config, playlists and session.
 

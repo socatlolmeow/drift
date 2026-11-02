@@ -7,7 +7,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
 use crate::command::{self, Amount, Command, COMMAND_NAMES};
-use crate::config::{self, Config};
+use crate::config::{self, Audio, Config};
 use crate::lyrics::{self, Lyrics};
 use crate::model::{split_artists, Collection, RepeatMode, Track};
 use crate::discord::Discord;
@@ -45,6 +45,10 @@ pub enum AppEvent {
     Audio {
         id: String,
         result: Result<std::path::PathBuf, String>,
+    },
+    Stream {
+        id: String,
+        result: Result<String, String>,
     },
 }
 
@@ -215,6 +219,8 @@ pub struct App {
     fail_streak: u8,
     want: Option<String>,
     fetching: Option<String>,
+    resolving: Option<String>,
+    audio: Audio,
     result_cursor: Option<usize>,
     buffered: Vec<Track>,
     next_page: Option<String>,
@@ -315,6 +321,8 @@ impl App {
             fail_streak: 0,
             want: None,
             fetching: None,
+            resolving: None,
+            audio: cfg.audio.clone(),
             result_cursor: None,
             buffered: Vec::new(),
             next_page: None,
@@ -1625,6 +1633,7 @@ impl App {
                 };
             }
             AppEvent::Audio { id, result } => self.on_audio(id, result),
+            AppEvent::Stream { id, result } => self.on_stream(id, result),
             AppEvent::Player(generation, pe) => {
                 if generation == self.player_gen {
                     self.on_player(pe);
@@ -1754,17 +1763,53 @@ impl App {
         self.fetching = Some(id.to_string());
         let tx = self.tx.clone();
         let id = id.to_string();
+        let audio = self.audio.clone();
         std::thread::spawn(move || {
-            let result = player::fetch_audio(&id);
+            let result = player::fetch_audio(&id, &audio);
             let _ = tx.send(AppEvent::Audio { id, result });
         });
     }
 
-    fn load_track(&mut self, id: &str) {
+    fn load_track(&mut self, id: &str, duration: Option<u32>) {
         self.want = Some(id.to_string());
         match player::cached_audio(id) {
             Some(path) => self.on_audio(id.to_string(), Ok(path)),
-            None => self.fetch_audio(id),
+            None if self.audio.should_download(duration) => self.fetch_audio(id),
+            None => self.resolve_stream(id),
+        }
+    }
+
+    /* Start playing from the network right away; no full download first. */
+    fn resolve_stream(&mut self, id: &str) {
+        if self.resolving.as_deref() == Some(id) {
+            return;
+        }
+        self.resolving = Some(id.to_string());
+        let tx = self.tx.clone();
+        let id = id.to_string();
+        let audio = self.audio.clone();
+        std::thread::spawn(move || {
+            let result = player::resolve_stream(&id, &audio);
+            let _ = tx.send(AppEvent::Stream { id, result });
+        });
+    }
+
+    fn on_stream(&mut self, id: String, result: Result<String, String>) {
+        if self.resolving.as_deref() == Some(id.as_str()) {
+            self.resolving = None;
+        }
+        if self.want.as_deref() != Some(id.as_str()) {
+            return;
+        }
+        self.want = None;
+        match result {
+            Ok(url) => {
+                if let Err(e) = self.with_player(|p| p.load(&url)) {
+                    self.play_state = PlayState::Stopped;
+                    self.error(format!("Playback failed: {e:#}"));
+                }
+            }
+            Err(msg) => self.on_player(PlayerEvent::LoadError(msg)),
         }
     }
 
@@ -1795,6 +1840,10 @@ impl App {
         let Some(next) = self.current.and_then(|c| self.queue.get(c + 1)) else {
             return;
         };
+        /* streamed tracks (the default, or too long to download) aren't prefetched */
+        if !self.audio.should_download(next.duration) {
+            return;
+        }
         let id = next.id.clone();
         if player::cached_audio(&id).is_none() {
             self.fetch_audio(&id);
@@ -1822,7 +1871,7 @@ impl App {
         };
         self.duration = track.duration.map_or(0.0, f64::from);
         self.info(format!("♪ {}", track.label()));
-        self.load_track(&track.id);
+        self.load_track(&track.id, track.duration);
     }
 
     fn play_default(&mut self) {
@@ -1914,7 +1963,7 @@ impl App {
         self.position = 0.0;
         self.duration = track.duration.map_or(0.0, f64::from);
         self.info(format!("♪ {}", track.label()));
-        self.load_track(&track.id);
+        self.load_track(&track.id, track.duration);
     }
 
     fn set_pause(&mut self, pause: bool) {

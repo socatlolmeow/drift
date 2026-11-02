@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
 
+use crate::config::Audio;
+
 /// Platform-specific transport for mpv's JSON IPC.
 /// Unix: a Unix domain socket. Windows: a named pipe (`\\.\pipe\...`).
 #[cfg(unix)]
@@ -311,6 +313,15 @@ impl Drop for Player {
 
 const KEEP_FILES: usize = 40;
 
+/// Base yt-dlp command with the user's cookie setting applied.
+fn ytdlp(audio: &Audio) -> Command {
+    let mut cmd = Command::new("yt-dlp");
+    if let Some(browser) = audio.cookies() {
+        cmd.arg("--cookies-from-browser").arg(browser);
+    }
+    cmd
+}
+
 fn audio_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
@@ -326,13 +337,13 @@ pub fn cached_audio(id: &str) -> Option<PathBuf> {
         .find(|p| p.file_stem().and_then(|s| s.to_str()) == Some(id))
 }
 
-pub fn fetch_audio(id: &str) -> Result<PathBuf, String> {
+pub fn fetch_audio(id: &str, audio: &Audio) -> Result<PathBuf, String> {
     if let Some(path) = cached_audio(id) {
         return Ok(path);
     }
     let dir = audio_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
-    let mut cmd = Command::new("yt-dlp");
+    let mut cmd = ytdlp(audio);
     cmd.args(["-f", "bestaudio/best", "--no-playlist", "--no-warnings", "--no-progress", "--no-mtime"])
         .arg("-P")
         .arg(&dir)
@@ -355,6 +366,35 @@ pub fn fetch_audio(id: &str) -> Result<PathBuf, String> {
         .find_map(|l| l.strip_prefix("ERROR: "))
         .map(ytdl_reason)
         .unwrap_or_else(|| "yt-dlp downloaded nothing".into()))
+}
+
+/// Ask yt-dlp for the direct media URL so mpv can start playing right away
+/// instead of waiting for the whole file to download.
+pub fn resolve_stream(id: &str, audio: &Audio) -> Result<String, String> {
+    let mut cmd = ytdlp(audio);
+    cmd.args(["-f", "bestaudio/best", "--no-playlist", "--no-warnings", "-g"])
+        .arg(format!("https://music.youtube.com/watch?v={id}"))
+        .stdin(Stdio::null());
+    crate::sys::no_window(&mut cmd);
+    let out = cmd
+        .output()
+        .map_err(|e| format!("could not run yt-dlp ({e}); is it installed and on PATH?"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if let Some(url) = stdout
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("http"))
+        .filter(|_| out.status.success())
+    {
+        return Ok(url.to_string());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    Err(stderr
+        .lines()
+        .rev()
+        .find_map(|l| l.strip_prefix("ERROR: "))
+        .map(ytdl_reason)
+        .unwrap_or_else(|| "yt-dlp returned no stream URL".into()))
 }
 
 fn prune(dir: &std::path::Path) {

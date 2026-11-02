@@ -80,6 +80,45 @@ pub struct Discord {
     pub client_id: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct Audio {
+    pub download: bool,
+    pub download_max_minutes: u32,
+    pub cookies_from_browser: String,
+}
+
+impl Default for Audio {
+    fn default() -> Self {
+        Audio {
+            download: false,
+            download_max_minutes: 15,
+            cookies_from_browser: String::new(),
+        }
+    }
+}
+
+impl Audio {
+    /// Browser name for yt-dlp's --cookies-from-browser, if one is set.
+    pub fn cookies(&self) -> Option<&str> {
+        let c = self.cookies_from_browser.trim();
+        (!c.is_empty()).then_some(c)
+    }
+
+    /// Whether a track should be downloaded to the cache before playing,
+    /// as opposed to streamed. Unknown lengths are streamed when a limit is set.
+    pub fn should_download(&self, duration: Option<u32>) -> bool {
+        if !self.download {
+            return false;
+        }
+        match (self.download_max_minutes, duration) {
+            (0, _) => true,
+            (max, Some(d)) => d <= max.saturating_mul(60),
+            (_, None) => false,
+        }
+    }
+}
+
 fn default_accent() -> Color {
     Color::Cyan
 }
@@ -104,6 +143,7 @@ pub struct Config {
     pub artist: Artist,
     pub ui: Ui,
     pub discord: Discord,
+    pub audio: Audio,
 }
 
 impl Config {
@@ -111,7 +151,7 @@ impl Config {
         Ok(Store::dir()?.join("config.toml"))
     }
 
-    pub fn render(p: &Playback, a: &Artist, u: &Ui, d: &Discord) -> String {
+    pub fn render(p: &Playback, a: &Artist, u: &Ui, d: &Discord, au: &Audio) -> String {
         let accent = match u.accent {
             Color::Reset => "reset",
             Color::Black => "black",
@@ -163,6 +203,19 @@ accent = \"{accent}\"
 # https://discord.com/developers/applications (its name is shown after
 # \"Listening to\") and paste its Application ID here. Empty means off.
 client_id = \"{client_id}\"
+
+[audio]
+# false: stream songs straight from YouTube (starts playing right away).
+# true:  download songs to the cache first, then play (and prefetch the next one).
+download = {download}
+# With download = true, songs longer than this many minutes are still streamed
+# instead of downloaded. 0 means download everything, however long.
+download_max_minutes = {dl_max}
+# Use your browser's cookies with yt-dlp when YouTube refuses to play something
+# (\"Sign in to confirm you're not a bot\", age-restricted songs, ...).
+# Examples: \"firefox\", \"chrome\", \"chromium\", \"brave\", \"edge\",
+# \"firefox:my-profile\". Empty means off. Close the browser if reading fails.
+cookies_from_browser = \"{cookies}\"
 ",
             volume = p.volume,
             shuffle = p.shuffle,
@@ -174,6 +227,9 @@ client_id = \"{client_id}\"
             popular = a.popular_first,
             accent = accent,
             client_id = d.client_id,
+            download = au.download,
+            dl_max = au.download_max_minutes,
+            cookies = au.cookies_from_browser.replace(['\\', '"'], ""),
         )
     }
 
@@ -188,7 +244,7 @@ client_id = \"{client_id}\"
         let text = match fs::read_to_string(&path) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let _ = Self::write(&Self::render(&Playback::default(), &Artist::default(), &Ui::default(), &Discord::default()));
+                let _ = Self::write(&Self::render(&Playback::default(), &Artist::default(), &Ui::default(), &Discord::default(), &Audio::default()));
                 return (Config::default(), None);
             }
             Err(e) => {
@@ -267,7 +323,7 @@ pub fn migrate_legacy() {
             let _ = Session::write(&s);
         }
     }
-    let _ = Config::write(&Config::render(&p, &Artist::default(), &Ui::default(), &Discord::default()));
+    let _ = Config::write(&Config::render(&p, &Artist::default(), &Ui::default(), &Discord::default(), &Audio::default()));
 }
 
 #[cfg(test)]
@@ -276,7 +332,7 @@ mod tests {
 
     #[test]
     fn default_file_parses_back() {
-        let text = Config::render(&Playback::default(), &Artist::default(), &Ui::default(), &Discord::default());
+        let text = Config::render(&Playback::default(), &Artist::default(), &Ui::default(), &Discord::default(), &Audio::default());
         let c: Config = toml::from_str(&text).unwrap();
         let d = Playback::default();
         assert_eq!(c.playback.volume, d.volume);
@@ -343,8 +399,42 @@ mod tests {
 
         // Roundtrip: render then parse
         let u = Ui { accent: Color::Blue };
-        let text = Config::render(&Playback::default(), &Artist::default(), &u, &Discord::default());
+        let text = Config::render(&Playback::default(), &Artist::default(), &u, &Discord::default(), &Audio::default());
         let c: Config = toml::from_str(&text).unwrap();
         assert_eq!(c.ui.accent, Color::Blue);
+    }
+
+    #[test]
+    fn audio_section() {
+        let c: Config = toml::from_str("").unwrap();
+        assert!(!c.audio.download);
+        assert_eq!(c.audio.cookies(), None);
+        let c: Config = toml::from_str(
+            "[audio]\ndownload = true\ndownload_max_minutes = 10\ncookies_from_browser = \" firefox \"",
+        )
+        .unwrap();
+        assert_eq!(c.audio.cookies(), Some("firefox"));
+        assert!(c.audio.should_download(Some(600)));
+        assert!(!c.audio.should_download(Some(601)));
+        assert!(!c.audio.should_download(None));
+        let mut a = c.audio.clone();
+        a.download_max_minutes = 0;
+        assert!(a.should_download(Some(10_000)));
+        a.download = false;
+        assert!(!a.should_download(Some(1)));
+    }
+
+    #[test]
+    fn audio_roundtrip() {
+        let a = Audio {
+            download: true,
+            download_max_minutes: 30,
+            cookies_from_browser: "chrome".into(),
+        };
+        let text = Config::render(&Playback::default(), &Artist::default(), &Ui::default(), &Discord::default(), &a);
+        let c: Config = toml::from_str(&text).unwrap();
+        assert!(c.audio.download);
+        assert_eq!(c.audio.download_max_minutes, 30);
+        assert_eq!(c.audio.cookies(), Some("chrome"));
     }
 }
