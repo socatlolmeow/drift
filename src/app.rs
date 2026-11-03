@@ -11,6 +11,7 @@ use crate::config::{self, Audio, Config};
 use crate::lyrics::{self, Lyrics};
 use crate::model::{split_artists, Collection, RepeatMode, Track};
 use crate::discord::Discord;
+use crate::keys::{Action, Key, Keymap, Lookup};
 use crate::mpris::{Cmd, Mpris};
 use crate::player::{self, Player, PlayerEvent};
 use crate::session::Session;
@@ -204,7 +205,7 @@ pub struct App {
     history: Vec<String>,
     hist_pos: Option<usize>,
     pub count: Option<usize>,
-    pub pending: Option<char>,
+    pub pending: Vec<Key>,
 
     pub play_state: PlayState,
     pub position: f64,
@@ -232,6 +233,7 @@ pub struct App {
     mpris: Option<Mpris>,
     discord: Option<Discord>,
     owns_session: bool,
+    keymap: Keymap,
     seek_step: f64,
     volume_step: f64,
     autoplay: bool,
@@ -307,7 +309,8 @@ impl App {
             history: Vec::new(),
             hist_pos: None,
             count: None,
-            pending: None,
+            pending: Vec::new(),
+            keymap: cfg.keymap.clone(),
             play_state: PlayState::Stopped,
             position: 0.0,
             duration: 0.0,
@@ -541,122 +544,103 @@ impl App {
     }
 
     fn key_normal(&mut self, key: KeyEvent) {
-        let ctrl = is_ctrl(&key);
+        let key = Key::from(key);
 
-        if let Some(p) = self.pending.take() {
-            let n = self.count.take();
-            if let KeyCode::Char(c) = key.code {
-                match (p, c) {
-                    ('g', 'g') => self.set_selected(n.map_or(0, |n| n.saturating_sub(1))),
-                    ('g', 'e') => {
-                        self.set_selected(n.map_or(usize::MAX, |n| n.saturating_sub(1)))
-                    }
-                    ('g', 'r') => self.set_view(View::Results),
-                    ('g', 'q') => self.set_view(View::Queue),
-                    ('g', 'p') => self.set_view(View::Playlists),
-                    ('d', 'd') => self.delete_selected(),
-                    ('g', 'a') => self.go_to_artist(),
-                    ('g', 's') => self.go_similar(),
-                    ('g', 'b') => self.go_album(),
-                    ('g', 'B') => self.save_album(None),
-                    _ => {}
-                }
-            }
-            return;
-        }
-
-        if let KeyCode::Char(c @ '0'..='9') = key.code {
-            if !ctrl && !(c == '0' && self.count.is_none()) {
-                let d = c as usize - '0' as usize;
+        if self.pending.is_empty() {
+            if let Some(d) = key.digit().filter(|&d| d != 0 || self.count.is_some()) {
                 self.count = Some((self.count.unwrap_or(0) * 10 + d).min(9999));
                 return;
             }
         }
-        let n = self.count.take();
+
+        self.pending.push(key);
+        match self.keymap.lookup(&self.pending) {
+            Lookup::Pending => {}
+            Lookup::Run(action) => {
+                self.pending.clear();
+                let n = self.count.take();
+                self.run_action(action, n);
+            }
+            Lookup::Nothing => {
+                self.pending.clear();
+                self.count = None;
+            }
+        }
+    }
+
+    fn run_action(&mut self, action: Action, n: Option<usize>) {
         let times = n.unwrap_or(1);
 
         if self.view == View::Playlists {
-            match key.code {
-                KeyCode::Right | KeyCode::Char('l') if !self.in_playlist() && !ctrl => {
+            match action {
+                Action::SeekForward if !self.in_playlist() => {
                     return self.open_selected_playlist();
                 }
-                KeyCode::Left | KeyCode::Char('h') | KeyCode::Backspace | KeyCode::Esc
-                    if self.in_playlist() && !ctrl =>
-                {
+                Action::SeekBack | Action::Back if self.in_playlist() => {
                     return self.close_playlist();
                 }
                 _ => {}
             }
         }
 
-        match key.code {
-            KeyCode::Char('d') if ctrl => self.move_sel(10),
-            KeyCode::Char('u') if ctrl => self.move_sel(-10),
-            KeyCode::Char('f') if ctrl => self.move_sel(20),
-            KeyCode::Char('b') if ctrl => self.move_sel(-20),
-            KeyCode::PageDown => self.move_sel(20),
-            KeyCode::PageUp => self.move_sel(-20),
-            KeyCode::Home => self.set_selected(0),
-            KeyCode::End => self.set_selected(usize::MAX),
+        match action {
+            Action::HalfPageDown => self.move_sel(10),
+            Action::HalfPageUp => self.move_sel(-10),
+            Action::PageDown => self.move_sel(20),
+            Action::PageUp => self.move_sel(-20),
+            Action::MoveDown => self.move_sel(times as isize),
+            Action::MoveUp => self.move_sel(-(times as isize)),
+            Action::GoTop => self.set_selected(n.map_or(0, |n| n.saturating_sub(1))),
+            Action::GoBottom => {
+                self.set_selected(n.map_or(usize::MAX, |n| n.saturating_sub(1)))
+            }
+            Action::Menu => self.open_menu(),
+            Action::Delete => self.delete_selected(),
 
-            KeyCode::Char('j') | KeyCode::Down => self.move_sel(times as isize),
-            KeyCode::Char('k') | KeyCode::Up => self.move_sel(-(times as isize)),
-            KeyCode::Char('g') => {
-                self.pending = Some('g');
-                self.count = n;
-            }
-            KeyCode::Char('G') | KeyCode::Menu => self.open_menu(),
-            KeyCode::Char('d') => {
-                if matches!(self.view, View::Queue | View::Playlists) {
-                    self.pending = Some('d');
-                }
-            }
-            KeyCode::Char('x') | KeyCode::Delete => self.delete_selected(),
+            Action::NextView => self.set_view(View::from_idx(self.view.idx() + 1)),
+            Action::PrevView => self.set_view(View::from_idx(self.view.idx() + 2)),
+            Action::ViewResults => self.set_view(View::Results),
+            Action::ViewQueue => self.set_view(View::Queue),
+            Action::ViewPlaylists => self.set_view(View::Playlists),
 
-            KeyCode::Tab => self.set_view(View::from_idx(self.view.idx() + 1)),
-            KeyCode::BackTab => self.set_view(View::from_idx(self.view.idx() + 2)),
-
-            KeyCode::Enter => self.activate(),
-            KeyCode::Char(' ') => self.toggle_pause(),
-            KeyCode::Char('n') | KeyCode::Char('>') => self.next(),
-            KeyCode::Char('N') | KeyCode::Char('<') => self.prev(),
-            KeyCode::Char('h') | KeyCode::Left => {
-                self.seek(Amount::Delta(-self.seek_step * times as f64))
-            }
-            KeyCode::Char('l') | KeyCode::Right => {
-                self.seek(Amount::Delta(self.seek_step * times as f64))
-            }
-            KeyCode::Char('+') | KeyCode::Char('=') => {
-                self.set_volume(Amount::Delta(self.volume_step * times as f64))
-            }
-            KeyCode::Char('-') | KeyCode::Char('_') => {
+            Action::Activate => self.activate(),
+            Action::Pause => self.toggle_pause(),
+            Action::Next => self.next(),
+            Action::Prev => self.prev(),
+            Action::SeekBack => self.seek(Amount::Delta(-self.seek_step * times as f64)),
+            Action::SeekForward => self.seek(Amount::Delta(self.seek_step * times as f64)),
+            Action::VolumeUp => self.set_volume(Amount::Delta(self.volume_step * times as f64)),
+            Action::VolumeDown => {
                 self.set_volume(Amount::Delta(-self.volume_step * times as f64))
             }
 
-            KeyCode::Char('a') => self.add_selected(),
-            KeyCode::Char('A') => self.add_all_results(),
-            KeyCode::Char('P') => self.play_all_results(),
-            KeyCode::Char('J') => self.move_item(1),
-            KeyCode::Char('K') => self.move_item(-1),
-            KeyCode::Char('s') => self.toggle_shuffle(),
-            KeyCode::Char('r') => self.cycle_repeat(),
+            Action::Add => self.add_selected(),
+            Action::AddAll => self.add_all_results(),
+            Action::PlayAll => self.play_all_results(),
+            Action::MoveItemDown => self.move_item(1),
+            Action::MoveItemUp => self.move_item(-1),
+            Action::Shuffle => self.toggle_shuffle(),
+            Action::Repeat => self.cycle_repeat(),
 
-            KeyCode::Char('/') => {
+            Action::Search => {
                 self.cmd_buf.clear();
                 self.cmd_search = true;
                 self.enter_command_mode();
             }
-            KeyCode::Char(':') => {
+            Action::Command => {
                 self.cmd_buf.clear();
                 self.cmd_search = false;
                 self.enter_command_mode();
             }
-            KeyCode::Char('L') => self.lyrics_panel = !self.lyrics_panel,
-            KeyCode::Char('F') => self.open_lyrics(),
-            KeyCode::Char('?') => self.open_help(),
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Esc => self.status = None,
-            _ => {}
+            Action::LyricsPanel => self.lyrics_panel = !self.lyrics_panel,
+            Action::Lyrics => self.open_lyrics(),
+            Action::GoArtist => self.go_to_artist(),
+            Action::GoSimilar => self.go_similar(),
+            Action::GoAlbum => self.go_album(),
+            Action::SaveAlbum => self.save_album(None),
+            Action::Help => self.open_help(),
+            Action::Quit => self.should_quit = true,
+            Action::Back => self.status = None,
         }
     }
 
@@ -2536,6 +2520,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keys::Keys;
     use std::sync::mpsc;
 
     fn track(id: &str, title: &str) -> Track {
@@ -2652,6 +2637,40 @@ mod tests {
         app.shuffle = false;
     }
 
+    fn check_custom_keys(app: &mut App) {
+        let custom = [
+            ("move_down", Keys::Many(vec!["e".into()])),
+            ("go_top", Keys::One("zz".into())),
+            ("quit", Keys::One("Q".into())),
+        ];
+        let custom = custom.into_iter().map(|(k, v)| (k.into(), v)).collect();
+        app.keymap = Keymap::build(&custom).unwrap();
+
+        app.results = (0..5).map(|i| track(&format!("{i:011}"), "T")).collect();
+        app.view = View::Results;
+        app.states[View::Results.idx()].select(Some(0));
+
+        press(app, KeyCode::Char('j'));
+        assert_eq!(app.selected(), 0);
+        press(app, KeyCode::Char('e'));
+        assert_eq!(app.selected(), 1);
+        press(app, KeyCode::Char('2'));
+        press(app, KeyCode::Char('e'));
+        assert_eq!(app.selected(), 3);
+        press(app, KeyCode::Char('z'));
+        assert!(app.count.is_none() && !app.pending.is_empty());
+        press(app, KeyCode::Char('z'));
+        assert_eq!(app.selected(), 0);
+        assert!(app.pending.is_empty());
+
+        press(app, KeyCode::Char('q'));
+        assert!(!app.should_quit);
+        press(app, KeyCode::Char('Q'));
+        assert!(app.should_quit);
+        app.should_quit = false;
+        app.keymap = Keymap::default();
+    }
+
     #[test]
     fn playlist_drill_in() {
         let dir = std::env::temp_dir().join(format!("drift-test-{}", std::process::id()));
@@ -2742,6 +2761,7 @@ mod tests {
 
         check_artist_popup(&mut app);
         check_paging(&mut app);
+        check_custom_keys(&mut app);
 
         app.run_command("remove");
         assert_eq!(app.queue.len(), 1);

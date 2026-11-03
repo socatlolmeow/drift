@@ -432,8 +432,8 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     if let Some(c) = app.count {
         pending.push_str(&c.to_string());
     }
-    if let Some(p) = app.pending {
-        pending.push(p);
+    for key in &app.pending {
+        pending.push_str(&key.to_string());
     }
     if !pending.is_empty() {
         block = block.title_bottom(

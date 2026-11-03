@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -7,6 +8,7 @@ use ratatui::style::Color;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer};
 
+use crate::keys::{Keymap, Keys};
 use crate::model::{RepeatMode, Track};
 use crate::session::Session;
 use crate::store::{write_atomic, Store};
@@ -144,6 +146,9 @@ pub struct Config {
     pub ui: Ui,
     pub discord: Discord,
     pub audio: Audio,
+    pub keys: HashMap<String, Keys>,
+    #[serde(skip)]
+    pub keymap: Keymap,
 }
 
 impl Config {
@@ -216,6 +221,17 @@ download_max_minutes = {dl_max}
 # Examples: \"firefox\", \"chrome\", \"chromium\", \"brave\", \"edge\",
 # \"firefox:my-profile\". Empty means off. Close the browser if reading fails.
 cookies_from_browser = \"{cookies}\"
+
+[keys]
+# Remap keys here. Each line sets an action to one key or a list of keys and
+# replaces that action's default keys. Everything you leave out keeps its vim
+# default. See the README for the list of actions.
+# Write keys as a character (\"x\", \"G\"), a name (space, enter, esc, tab, backtab,
+# backspace, delete, home, end, pageup, pagedown, up, down, left, right, f1-f12),
+# ctrl+key (\"ctrl+d\") or a sequence (\"gg\", \"ctrl+x g\"). An empty list unbinds.
+# quit = \"Q\"
+# move_down = [\"j\", \"down\"]
+# go_top = [\"gg\", \"home\"]
 ",
             volume = p.volume,
             shuffle = p.shuffle,
@@ -257,7 +273,14 @@ cookies_from_browser = \"{cookies}\"
         match toml::from_str::<Config>(&text) {
             Ok(mut c) => {
                 c.playback.sanitize();
-                (c, None)
+                let warning = match Keymap::build(&c.keys) {
+                    Ok(keymap) => {
+                        c.keymap = keymap;
+                        None
+                    }
+                    Err(e) => Some(format!("config.toml [keys]: {e}; using default keys")),
+                };
+                (c, warning)
             }
             Err(e) => {
                 let bak = path.with_extension("toml.bak");
@@ -402,6 +425,16 @@ mod tests {
         let text = Config::render(&Playback::default(), &Artist::default(), &u, &Discord::default(), &Audio::default());
         let c: Config = toml::from_str(&text).unwrap();
         assert_eq!(c.ui.accent, Color::Blue);
+    }
+
+    #[test]
+    fn keys_section() {
+        let c: Config = toml::from_str("").unwrap();
+        assert!(c.keys.is_empty());
+        let c: Config =
+            toml::from_str("[keys]\nquit = \"Q\"\nmove_down = [\"e\", \"down\"]").unwrap();
+        assert!(Keymap::build(&c.keys).is_ok());
+        assert_eq!(c.keys.len(), 2);
     }
 
     #[test]

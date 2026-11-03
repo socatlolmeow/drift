@@ -2,6 +2,7 @@ mod app;
 mod command;
 mod config;
 mod discord;
+mod keys;
 mod lyrics;
 mod model;
 mod mpris;

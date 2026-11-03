@@ -30,7 +30,7 @@ Search, queue and play music with no account, no login and no browser.
 - **Command palette** - `:search`, `:seek`, `:vol`, `:import` and more, with completion and history
 - **Picks up where you left off** - your queue and position are restored the next time you start Drift
 - **Desktop integration** - media keys and `playerctl` on Linux (MPRIS), plus optional Discord rich precense
-- **Configurable** - volume, seek step, shuffle/repeat defaults, accent color and more in a single TOML file
+- **Configurable** - volume, seek step, shuffle/repeat defaults, accent color, custom keybinds and more in a single TOML file
 
 ## Installation
 
@@ -116,11 +116,15 @@ Press `/` to search, `Enter` to play, `a` to queue and `?` for the full list of 
 | `G` | song menu |
 | `ga` | go to the artist |
 | `gs` | see similar songs |
+| `gb` | go to the album |
+| `gB` | save the album as a playlist |
 | `L` | toggle the lyrics panel |
 | `F` | fullscreen lyrics |
 | `/` `:` | search / command line |
 | `?` | help |
 | `q` | quit |
+
+These are the defaults. See [Custom keys](#custom-keys) to change them.
 
 ### Commands
 
@@ -178,6 +182,48 @@ cookies_from_browser = ""     # e.g. "firefox" or "chrome"; passed to yt-dlp whe
 ```
 
 By default Drift streams songs, so playback starts right away even for hour long tracks. Set `download = true` to cache songs on disk first (this also prefetches the next song). If YouTube asks you to sign in or playback fails, set `cookies_from_browser` to the browser where youre logged into YouTube. If you alr have a `config.toml`, add the `[audio]` section by hand, since Drift never rewrites it.
+
+### Custom keys
+
+The keys in the table above are the defaults. To change them add a `[keys]` section to `config.toml`. Each line sets an action to one key or a list of keys and replaces that action's default keys; everything you leave out keeps its default.
+
+```toml
+[keys]
+quit = "Q"
+move_down = ["j", "down", "ctrl+n"]
+move_up = ["k", "up", "ctrl+p"]
+go_top = ["gg", "home"]
+shuffle = []                  # an empty list unbinds the action
+```
+
+A key is a character (`"x"`, `"G"`, `"/"`), a name (`space`, `enter`, `esc`, `tab`, `backtab`, `backspace`, `delete`, `insert`, `home`, `end`, `pageup`, `pagedown`, `up`, `down`, `left`, `right`, `menu`, `f1` to `f12`), `ctrl+` plus a key, or a sequence like `"gg"` or `"ctrl+x g"`. Counts (`5j`) keep working on any binding. If you bind a key that is a default of another action, the other action loses it. A mistake in `[keys]` shows a message at startup and falls back to the default keys.
+
+| Action | Default keys |
+| --- | --- |
+| `move_down` `move_up` | `j` `down` / `k` `up` |
+| `half_page_down` `half_page_up` | `ctrl+d` / `ctrl+u` |
+| `page_down` `page_up` | `ctrl+f` `pagedown` / `ctrl+b` `pageup` |
+| `go_top` `go_bottom` | `gg` `home` / `ge` `end` |
+| `next_view` `prev_view` | `tab` / `backtab` |
+| `view_results` `view_queue` `view_playlists` | `gr` / `gq` / `gp` |
+| `activate` | `enter` |
+| `pause` | `space` |
+| `next` `prev` | `n` `>` / `N` `<` |
+| `seek_back` `seek_forward` | `h` `left` / `l` `right` |
+| `volume_up` `volume_down` | `+` `=` / `-` `_` |
+| `add` `add_all` `play_all` | `a` / `A` / `P` |
+| `delete` | `x` `delete` `dd` |
+| `move_item_down` `move_item_up` | `J` / `K` |
+| `shuffle` `repeat` | `s` / `r` |
+| `menu` | `G` `menu` |
+| `go_artist` `go_similar` `go_album` `save_album` | `ga` / `gs` / `gb` / `gB` |
+| `lyrics_panel` `lyrics` | `L` / `F` |
+| `search` `command` | `/` / `:` |
+| `help` | `?` |
+| `quit` | `q` |
+| `back` | `backspace` `esc` |
+
+In the Playlists tab `seek_forward` opens the selected playlist, and `seek_back` or `back` leaves it. Only the main view is remappable; popups, the command line and fullscreen lyrics keep their own keys, and the in-app help (`?`) still lists the defaults.
 
 Set `DRIFT_CONFIG_DIR` or `DRIFT_STATE_DIR` to change where Drift keeps its config, playlists and session.
 
