@@ -1,40 +1,61 @@
 <div align="center">
 
-<h1>Drift</h1>
-
-[![Stars](https://img.shields.io/github/stars/socatlolmeow/drift?style=flat-square&logo=github)](https://github.com/socatlolmeow/drift/stargazers)
-![License](https://img.shields.io/github/license/socatlolmeow/drift?style=flat-square)
-![Rust](https://img.shields.io/badge/built%20with-Rust-orange?style=flat-square&logo=rust)
+# Drift
 
 ### A YouTube Music player for your terminal, with Vim keybinds.
 
 Search, queue and play music with no account, no login and no browser.
 
+[![Stars](https://img.shields.io/github/stars/socatlolmeow/drift?style=flat-square&logo=github)](https://github.com/socatlolmeow/drift/stargazers)
+[![Build](https://img.shields.io/github/actions/workflow/status/socatlolmeow/drift/rust.yml?branch=main&style=flat-square&label=build)](https://github.com/socatlolmeow/drift/actions/workflows/rust.yml)
+[![License](https://img.shields.io/github/license/socatlolmeow/drift?style=flat-square)](LICENSE)
+![Rust](https://img.shields.io/badge/built%20with-Rust-orange?style=flat-square&logo=rust)
+
+<img src="https://github.com/socatlolmeow/drift/blob/main/examples/showcase.gif?raw=true" alt="Drift showcase" />
+
 </div>
 
 ---
 
-<div align="center">
-  <img src="https://github.com/socatlolmeow/drift/blob/main/examples/showcase.gif?raw=true" alt="Drift showcase" />
-</div>
+## Table of contents
+
+- [Features](#features)
+- [Installation](#installation)
+  - [Arch Linux (AUR)](#arch-linux-aur)
+  - [Install script](#install-script)
+  - [From source](#from-source)
+  - [Nix](#nix)
+  - [Installing mpv and yt-dlp manually](#installing-mpv-and-yt-dlp-manually)
+- [Usage](#usage)
+- [Keybinds](#keybinds)
+- [Commands](#commands)
+- [Lyrics](#lyrics)
+- [Configuration](#configuration)
+  - [Streaming or downloading](#streaming-or-downloading)
+  - [Discord rich presence](#discord-rich-presence)
+  - [Custom keys](#custom-keys)
+  - [Environment variables](#environment-variables)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
 ## Features
 
-- **Vim-style keybinds** - `j`/`k`, `gg`/`ge`, counts like `5j`, and `:` for the command line
-- **Synced lyrics** - a side panel or fullscreen view that highlights the current line and fills it in as it's sung
-- **Queue & playlists** - build a queue, save and reorder playlists, or import any YouTube / YouTube Music playlist by URL
-- **Discovery** - press `ga` for an artist's songs, `gs` for similar songs, or use `:album` and `:playlist` to search albums and playlists
-- **Song menu** - press `G` on a song to play it, qeue it, add it to a playlist, jump to the artist or see its info
-- **Command palette** - `:search`, `:seek`, `:vol`, `:import` and more, with completion and history
-- **Picks up where you left off** - your queue and position are restored the next time you start Drift
-- **Desktop integration** - media keys and `playerctl` on Linux (MPRIS), plus optional Discord rich precense
-- **Configurable** - volume, seek step, shuffle/repeat defaults, accent color, custom keybinds and more in a single TOML file
+- Vim-style keybinds: `j`/`k`, `gg`/`ge`, counts like `5j`, and `:` for the command line
+- Synced lyrics in a side panel or fullscreen, with the current line filled in as it's sung
+- Queue and playlists. Build a queue, save and reorder playlists, or import any YouTube / YouTube Music playlist by URL
+- Discovery: `ga` for an artist's songs, `gs` for similar songs, `gb` for the album, and `:album` / `:playlist` to search for albums and playlists
+- A song menu (`G`) to play a song, queue it, add it to a playlist, jump to the artist or see its info
+- A command palette with completion and history
+- Your queue and position are restored the next time you start Drift
+- Media keys and `playerctl` on Linux (MPRIS), plus optional Discord rich presence
+- One TOML file for volume, seek step, shuffle/repeat defaults, accent color and custom keybinds
 
 ## Installation
 
-Drift needs [mpv](https://mpv.io/) for playback and [yt-dlp](https://github.com/yt-dlp/yt-dlp) for stream extraction. Run `drift --check` at any time to verify both are installed.
+Drift needs [mpv](https://mpv.io/) for playback and [yt-dlp](https://github.com/yt-dlp/yt-dlp) to get the audio streams. Run `drift --check` at any time to see if both are installed.
 
 ### Arch Linux (AUR)
 
@@ -42,7 +63,7 @@ Drift needs [mpv](https://mpv.io/) for playback and [yt-dlp](https://github.com/
 yay -S driftmusic-git
 ```
 
-Any AUR helper works, or build it by hand:
+Any AUR helper works. You can also build it by hand:
 
 ```bash
 git clone https://aur.archlinux.org/driftmusic-git.git
@@ -50,11 +71,11 @@ cd driftmusic-git
 makepkg -si
 ```
 
-`mpv` and `yt-dlp` are installed automatically.
+`mpv` and `yt-dlp` are pulled in automatically.
 
 ### Install script
 
-On Arch, Debian/Ubuntu, Fedora, openSUSE, Gentoo & Void the install script installs the dependencies and builds Drift with cargo:
+Works on Arch, Debian/Ubuntu, Fedora, openSUSE, Void, Alpine and Gentoo. It installs the dependencies and builds Drift with cargo.
 
 ```bash
 git clone https://github.com/socatlolmeow/drift.git
@@ -74,8 +95,15 @@ cargo install --path .
 
 This puts `drift` in `~/.cargo/bin/`, which is on your `$PATH` if you installed Rust with rustup.
 
-<details>
-<summary>Installing mpv and yt-dlp manually</summary>
+### Nix
+
+The repo has a flake that puts `mpv` and `yt-dlp` on Drift's `PATH` for you:
+
+```bash
+nix run github:socatlolmeow/drift
+```
+
+### Installing mpv and yt-dlp manually
 
 | Platform | Command |
 | --- | --- |
@@ -84,19 +112,21 @@ This puts `drift` in `~/.cargo/bin/`, which is on your `$PATH` if you installed 
 | Arch | `sudo pacman -S mpv yt-dlp` |
 | Windows | `winget install mpv.net yt-dlp.yt-dlp` or `scoop install mpv yt-dlp` |
 
-</details>
-
 ## Usage
 
 ```bash
 drift                    # start the player
 drift "daft punk"        # start with a search
-drift --check            # verify mpv and yt-dlp are installed
+drift --check            # check that mpv and yt-dlp are installed
+drift --help
+drift --version
 ```
 
-Press `/` to search, `Enter` to play, `a` to queue and `?` for the full list of keybinds.
+Press `/` to search, `Enter` to play, `a` to add a song to the queue and `?` for the full list of keybinds. Inside the player, `:help` lists the commands.
 
 ## Keybinds
+
+These are the defaults. You can change them, see [Custom keys](#custom-keys).
 
 | Key | Action |
 | --- | --- |
@@ -124,31 +154,39 @@ Press `/` to search, `Enter` to play, `a` to queue and `?` for the full list of 
 | `?` | help |
 | `q` | quit |
 
-These are the defaults. See [Custom keys](#custom-keys) to change them.
+## Commands
 
-### Commands
+Press `:` to open the command line. Most commands have short aliases (`:vol`, `:sa`, `:ar` and so on).
 
 | Command | Action |
 | --- | --- |
 | `:search "query"` | search YouTube Music |
 | `:play [N]` | play or resume, or play row `N` |
+| `:pause` `:resume` `:toggle` `:stop` | control playback |
+| `:next` `:prev` | next / previous track |
 | `:seek 90` `1:30` `+10` | absolute or relative seek |
 | `:vol 50` `+5` | set or change the volume |
 | `:shuffle` `:repeat [off\|all\|one]` | playback modes |
 | `:add [N]` `:addall` `:playall` | queue results |
+| `:remove [N]` `:clear` | remove from the queue / clear it |
 | `:save name` `:load name` `:append name` | work with playlists |
-| `:savealbum [name]` `:saveresults [name]` | save album or results directly as a playlist |
+| `:save! name` | save and overwrite an existing playlist |
+| `:savealbum [name]` `:saveresults [name]` | save an album or the results directly as a playlist |
 | `:addto name` `:delpl name` | add a song to / delete a playlist |
 | `:import URL` | import a YouTube / YouTube Music playlist |
 | `:album [query]` | open the selected song's album, or search albums |
 | `:playlist query` | search YouTube Music playlists |
-| `:similar` | radio: songs similar to the selected one (also `:radio`) |
+| `:similar` | songs similar to the selected one (also `:radio`) |
 | `:artist` | songs by the selected song's artist |
+| `:results` `:queue` `:playlists` | switch view |
 | `:lyrics` | toggle the lyrics panel |
+| `:quit` | quit |
+
+`:save` refuses to overwrite an existing playlist. Use `:save!` to replace it or `:append` to add to the end of it.
 
 ## Lyrics
 
-Press `L` for a side panel (needs a terminal at least 70 columns wide) or `F` for fullscreen. The current line is highlighted and fills in as it's sung. Songs without synced lyrics show plain text you can scroll with `j`/`k`.
+Press `L` for a side panel (needs a terminal at least 70 columns wide) or `F` for fullscreen. The current line is highlighted and fills in as it's sung. Songs without synced lyrics show plain text that you can scroll with `j`/`k`.
 
 Lyrics come from [LRCLIB](https://lrclib.net) and are only fetched while the panel or fullscreen view is open.
 
@@ -173,19 +211,40 @@ popular_first = false
 accent = "cyan"       # a color name or a hex value like "#FF8800"
 
 [discord]
-client_id = ""        # change this for Discord RPC to work in Drift
+client_id = ""        # set this to enable Discord rich presence
 
 [audio]
 download = false              # false: stream songs; true: download to the cache first
 download_max_minutes = 15     # with download = true, longer songs are still streamed (0 = no limit)
 cookies_from_browser = ""     # e.g. "firefox" or "chrome"; passed to yt-dlp when YouTube blocks playback
+
+[keys]
+quit = "Q"
+move_down = ["j", "down", "ctrl+n"]
+move_up = ["k", "up", "ctrl+p"]
+go_top = ["gg", "home"]
+shuffle = []                  # an empty list unbinds the action
 ```
 
-By default Drift streams songs, so playback starts right away even for hour long tracks. Set `download = true` to cache songs on disk first (this also prefetches the next song). If YouTube asks you to sign in or playback fails, set `cookies_from_browser` to the browser where youre logged into YouTube. If you alr have a `config.toml`, add the `[audio]` section by hand, since Drift never rewrites it.
+If you already have a `config.toml` from an older version, add the `[audio]` section by hand, since Drift never rewrites the file.
+
+### Streaming or downloading
+
+By default Drift streams songs, so playback starts right away, even for hour-long tracks. With `download = true` songs are cached on disk first, and the next song in the queue is fetched in the background while the current one plays.
+
+### Discord rich presence
+
+This is off by default.
+
+1. Create an application at https://discord.com/developers/applications. Its name is what shows up after "Listening to".
+2. Copy the Application ID into `client_id` under `[discord]` in `config.toml`.
+3. Restart Drift.
+
+Your status then shows the current song with cover art, album, a progress bar and a "Listen Along" button. If Discord isn't running, Drift keeps retrying quietly in the background.
 
 ### Custom keys
 
-The keys in the table above are the defaults. To change them add a `[keys]` section to `config.toml`. Each line sets an action to one key or a list of keys and replaces that action's default keys; everything you leave out keeps its default.
+To change keys, add a `[keys]` section to `config.toml`. Each line sets an action to one key or a list of keys and replaces that action's default keys. Everything you leave out keeps its default.
 
 ```toml
 [keys]
@@ -223,17 +282,40 @@ A key is a character (`"x"`, `"G"`, `"/"`), a name (`space`, `enter`, `esc`, `ta
 | `quit` | `q` |
 | `back` | `backspace` `esc` |
 
-In the Playlists tab `seek_forward` opens the selected playlist, and `seek_back` or `back` leaves it. Only the main view is remappable; popups, the command line and fullscreen lyrics keep their own keys, and the in-app help (`?`) still lists the defaults.
+In the Playlists tab `seek_forward` opens the selected playlist, and `seek_back` or `back` leaves it. Only the main view is remappable. Popups, the command line and fullscreen lyrics keep their own keys, and the in-app help (`?`) still lists the defaults.
 
-Set `DRIFT_CONFIG_DIR` or `DRIFT_STATE_DIR` to change where Drift keeps its config, playlists and session.
+### Environment variables
+
+| Variable | What it does |
+| --- | --- |
+| `DRIFT_CONFIG_DIR` | where Drift keeps `config.toml` and your playlists |
+| `DRIFT_STATE_DIR` | where Drift keeps the saved session |
+| `DRIFT_MPV_ARGS` | extra arguments passed to mpv |
+
+## Troubleshooting
+
+**Drift says mpv or yt-dlp is missing.** Run `drift --check` to see which one, and install it with the table in [Installing mpv and yt-dlp manually](#installing-mpv-and-yt-dlp-manually).
+
+**Playback fails with "Sign in to confirm you're not a bot".** YouTube wants a login. Set `cookies_from_browser` under `[audio]` to a browser you're logged into YouTube with (for example `"firefox"`), then restart Drift. Updating yt-dlp also helps, since YouTube changes things often.
+
+**The lyrics panel doesn't show up.** It needs a terminal at least 70 columns wide. Make the window wider or use `F` for fullscreen lyrics.
+
+**`drift: command not found`.** Make sure `~/.cargo/bin` is in your `$PATH`.
+
+**`gb` opens the wrong album.** Drift looks albums up by album and artist name, so it can guess wrong, and the song needs album info to begin with. `:album <query>` lets you search for it yourself.
+
+You can run several Drift windows at once. Only the first one restores and saves the session, and playlists saved from different windows are merged instead of overwritten.
 
 ## Contributing
 
-Bug reports, ideas and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) before you start.
+Bug reports, ideas and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before you start. To build and run the tests:
 
-## Star History
+```bash
+cargo build
+cargo test
+```
 
-[![Star History Chart](https://api.star-history.com/svg?repos=socatlolmeow/drift&type=Date)](https://star-history.com/#socatlolmeow/drift)
+Recent changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
