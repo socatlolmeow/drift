@@ -8,10 +8,11 @@ use ratatui::widgets::TableState;
 
 use crate::command::{self, Amount, Command, COMMAND_NAMES};
 use crate::config::{self, Audio, Config};
+use crate::discord::Discord;
+use crate::history::History;
+use crate::keys::{Action, Key, Keymap, Lookup};
 use crate::lyrics::{self, Lyrics};
 use crate::model::{split_artists, Collection, RepeatMode, Track};
-use crate::discord::Discord;
-use crate::keys::{Action, Key, Keymap, Lookup};
 use crate::mpris::{Cmd, Mpris};
 use crate::player::{self, Player, PlayerEvent};
 use crate::session::Session;
@@ -62,6 +63,8 @@ pub enum View {
     Results,
     Queue,
     Playlists,
+    RecentlyPlayed,
+    MostPlayed,
 }
 
 impl View {
@@ -70,10 +73,18 @@ impl View {
             View::Results => 0,
             View::Queue => 1,
             View::Playlists => 2,
+            View::RecentlyPlayed => 3,
+            View::MostPlayed => 4,
         }
     }
     fn from_idx(i: usize) -> View {
-        [View::Results, View::Queue, View::Playlists][i % 3]
+        [
+            View::Results,
+            View::Queue,
+            View::Playlists,
+            View::RecentlyPlayed,
+            View::MostPlayed,
+        ][i % 5]
     }
 }
 
@@ -88,6 +99,30 @@ pub enum Mode {
     Menu,
     Info,
     Lyrics,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SearchKind {
+    Songs,
+    Albums,
+    Playlists,
+}
+
+impl SearchKind {
+    pub const ALL: [SearchKind; 3] = [SearchKind::Songs, SearchKind::Albums, SearchKind::Playlists];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SearchKind::Songs => "Songs",
+            SearchKind::Albums => "Albums",
+            SearchKind::Playlists => "Playlists",
+        }
+    }
+
+    fn cycle(self, delta: isize) -> Self {
+        let i = Self::ALL.iter().position(|kind| *kind == self).unwrap_or(0) as isize;
+        Self::ALL[(i + delta).rem_euclid(Self::ALL.len() as isize) as usize]
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -177,12 +212,15 @@ pub struct App {
     pub queue: Vec<Track>,
     pub current: Option<usize>,
     pub store: Store,
-    pub states: [TableState; 3],
+    pub history_data: History,
+    pub states: [TableState; 5],
+    pub queue_sidebar: bool,
     pub open: Option<String>,
     pub pl_state: TableState,
 
     pub cmd_buf: String,
     pub cmd_search: bool,
+    pub search_kind: SearchKind,
     pub menu_items: Vec<MenuItem>,
     pub menu_sel: usize,
     pub menu_title: String,
@@ -259,8 +297,9 @@ impl App {
         let (store, store_warning) = Store::load();
         config::migrate_legacy();
         let (cfg, cfg_warning) = Config::load();
+        let (history_data, history_warning) = History::load();
         let p = cfg.playback;
-        let warning = cfg_warning.or(store_warning);
+        let warning = cfg_warning.or(store_warning).or(history_warning);
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
@@ -282,11 +321,14 @@ impl App {
             queue: Vec::new(),
             current: None,
             store,
+            history_data,
             states: Default::default(),
+            queue_sidebar: true,
             open: None,
             pl_state: TableState::default(),
             cmd_buf: String::new(),
             cmd_search: false,
+            search_kind: SearchKind::Songs,
             menu_items: Vec::new(),
             menu_sel: 0,
             menu_title: String::new(),
@@ -449,7 +491,16 @@ impl App {
             View::Results => self.results.len(),
             View::Queue => self.queue.len(),
             View::Playlists => self.store.playlists.len(),
+            View::RecentlyPlayed | View::MostPlayed => self.history_data.entries.len(),
         }
+    }
+
+    pub fn history_tracks(&self, most_played: bool) -> Vec<Track> {
+        self.history_data
+            .sorted(most_played)
+            .into_iter()
+            .map(|entry| entry.track.clone())
+            .collect()
     }
 
     pub fn in_playlist(&self) -> bool {
@@ -591,17 +642,25 @@ impl App {
             Action::MoveDown => self.move_sel(times as isize),
             Action::MoveUp => self.move_sel(-(times as isize)),
             Action::GoTop => self.set_selected(n.map_or(0, |n| n.saturating_sub(1))),
-            Action::GoBottom => {
-                self.set_selected(n.map_or(usize::MAX, |n| n.saturating_sub(1)))
-            }
+            Action::GoBottom => self.set_selected(n.map_or(usize::MAX, |n| n.saturating_sub(1))),
             Action::Menu => self.open_menu(),
             Action::Delete => self.delete_selected(),
 
             Action::NextView => self.set_view(View::from_idx(self.view.idx() + 1)),
-            Action::PrevView => self.set_view(View::from_idx(self.view.idx() + 2)),
+            Action::PrevView => self.set_view(View::from_idx(self.view.idx() + 4)),
             Action::ViewResults => self.set_view(View::Results),
             Action::ViewQueue => self.set_view(View::Queue),
             Action::ViewPlaylists => self.set_view(View::Playlists),
+            Action::ViewRecent => self.set_view(View::RecentlyPlayed),
+            Action::ViewMostPlayed => self.set_view(View::MostPlayed),
+            Action::ToggleQueueSidebar => {
+                self.queue_sidebar = !self.queue_sidebar;
+                self.info(if self.queue_sidebar {
+                    "Queue sidebar shown"
+                } else {
+                    "Queue sidebar hidden"
+                });
+            }
 
             Action::Activate => self.activate(),
             Action::Pause => self.toggle_pause(),
@@ -610,9 +669,7 @@ impl App {
             Action::SeekBack => self.seek(Amount::Delta(-self.seek_step * times as f64)),
             Action::SeekForward => self.seek(Amount::Delta(self.seek_step * times as f64)),
             Action::VolumeUp => self.set_volume(Amount::Delta(self.volume_step * times as f64)),
-            Action::VolumeDown => {
-                self.set_volume(Amount::Delta(-self.volume_step * times as f64))
-            }
+            Action::VolumeDown => self.set_volume(Amount::Delta(-self.volume_step * times as f64)),
 
             Action::Add => self.add_selected(),
             Action::AddAll => self.add_all_results(),
@@ -625,6 +682,7 @@ impl App {
             Action::Search => {
                 self.cmd_buf.clear();
                 self.cmd_search = true;
+                self.search_kind = SearchKind::Songs;
                 self.enter_command_mode();
             }
             Action::Command => {
@@ -657,6 +715,8 @@ impl App {
                 .and_then(|t| t.get(sel))
                 .cloned(),
             View::Playlists => None,
+            View::RecentlyPlayed => self.history_tracks(false).get(sel).cloned(),
+            View::MostPlayed => self.history_tracks(true).get(sel).cloned(),
         }
     }
 
@@ -670,8 +730,16 @@ impl App {
             let n = self.store.playlists.get(&name).map_or(0, Vec::len);
             items.push(menu_item('o', "Open", MenuAction::OpenPlaylist));
             items.push(menu_item('p', "Play", MenuAction::Play));
-            items.push(menu_item('a', "Append to queue", MenuAction::AppendPlaylist));
-            items.push(menu_item('x', "Delete playlist…", MenuAction::DeletePlaylist));
+            items.push(menu_item(
+                'a',
+                "Append to queue",
+                MenuAction::AppendPlaylist,
+            ));
+            items.push(menu_item(
+                'x',
+                "Delete playlist…",
+                MenuAction::DeletePlaylist,
+            ));
             self.menu_title = format!("{name} ({n})");
             self.menu_track = None;
         } else {
@@ -688,7 +756,11 @@ impl App {
             items.push(menu_item('s', "Similar songs", MenuAction::Similar));
             if track.album.is_some() {
                 items.push(menu_item('b', "Show album", MenuAction::Album));
-                items.push(menu_item('B', "Save album to playlist", MenuAction::SaveTrackAlbum));
+                items.push(menu_item(
+                    'B',
+                    "Save album to playlist",
+                    MenuAction::SaveTrackAlbum,
+                ));
             }
             items.push(menu_item('l', "Add to playlist…", MenuAction::PlaylistMenu));
             if in_queue {
@@ -701,14 +773,26 @@ impl App {
                 items.push(menu_item('Q', "Queue all results", MenuAction::QueueAll));
                 items.push(menu_item('P', "Play all results", MenuAction::PlayAll));
                 if self.results_title.starts_with("Album: ") {
-                    items.push(menu_item('S', "Save album as playlist…", MenuAction::SaveAlbum));
+                    items.push(menu_item(
+                        'S',
+                        "Save album as playlist…",
+                        MenuAction::SaveAlbum,
+                    ));
                 } else {
-                    items.push(menu_item('S', "Save results as playlist…", MenuAction::SaveResults));
+                    items.push(menu_item(
+                        'S',
+                        "Save results as playlist…",
+                        MenuAction::SaveResults,
+                    ));
                 }
             }
             if in_queue {
                 items.push(menu_item('c', "Clear queue", MenuAction::ClearQueue));
-                items.push(menu_item('S', "Save queue as playlist…", MenuAction::SaveQueue));
+                items.push(menu_item(
+                    'S',
+                    "Save queue as playlist…",
+                    MenuAction::SaveQueue,
+                ));
             }
             self.menu_title = track.title.clone();
             self.menu_track = Some(track);
@@ -819,7 +903,11 @@ impl App {
                 }
             }
             MenuAction::SaveAlbum => {
-                let default_name = self.results_title.strip_prefix("Album: ").unwrap_or("").trim();
+                let default_name = self
+                    .results_title
+                    .strip_prefix("Album: ")
+                    .unwrap_or("")
+                    .trim();
                 if !default_name.is_empty() {
                     self.prefill_command(&format!("savealbum \"{default_name}\""));
                 } else {
@@ -984,9 +1072,29 @@ impl App {
         self.history
             .iter()
             .rev()
-            .filter_map(|h| h.strip_prefix("search "))
+            .filter_map(|h| {
+                h.strip_prefix("search ")
+                    .or_else(|| h.strip_prefix("album "))
+                    .or_else(|| h.strip_prefix("playlist "))
+            })
             .take(n)
             .collect()
+    }
+
+    fn search_history_entry(line: &str) -> Option<(SearchKind, &str)> {
+        if let Some(q) = line.strip_prefix("search ") {
+            Some((SearchKind::Songs, q))
+        } else if let Some(q) = line.strip_prefix("album ") {
+            Some((SearchKind::Albums, q))
+        } else {
+            line.strip_prefix("playlist ")
+                .map(|q| (SearchKind::Playlists, q))
+        }
+    }
+
+    fn cycle_search_kind(&mut self, delta: isize) {
+        self.search_kind = self.search_kind.cycle(delta);
+        self.hist_pos = None;
     }
 
     fn key_command(&mut self, key: KeyEvent) {
@@ -1008,15 +1116,32 @@ impl App {
                 if trimmed.is_empty() {
                     return;
                 }
+                let search_kind = self.search_kind;
                 let full = if self.cmd_search {
-                    format!("search {trimmed}")
+                    match search_kind {
+                        SearchKind::Songs => format!("search {trimmed}"),
+                        SearchKind::Albums => format!("album {trimmed}"),
+                        SearchKind::Playlists => format!("playlist {trimmed}"),
+                    }
                 } else {
                     trimmed.to_string()
                 };
                 if self.history.last() != Some(&full) {
                     self.history.push(full.clone());
                 }
-                self.run_command(&full);
+                if self.cmd_search {
+                    match search_kind {
+                        SearchKind::Songs => self.start_search(trimmed.to_string()),
+                        SearchKind::Albums => {
+                            self.start_collection_search(trimmed.to_string(), Kind::Album)
+                        }
+                        SearchKind::Playlists => {
+                            self.start_collection_search(trimmed.to_string(), Kind::Playlist)
+                        }
+                    }
+                } else {
+                    self.run_command(&full);
+                }
             }
             KeyCode::Backspace => {
                 if self.cmd_buf.is_empty() {
@@ -1031,6 +1156,10 @@ impl App {
                 let cut = self.cmd_buf[..trimmed].rfind(' ').map_or(0, |i| i + 1);
                 self.cmd_buf.truncate(cut);
             }
+            KeyCode::Up if self.cmd_search && !ctrl => self.cycle_search_kind(-1),
+            KeyCode::Down if self.cmd_search && !ctrl => self.cycle_search_kind(1),
+            KeyCode::Up if self.cmd_search && ctrl => self.history_step(-1),
+            KeyCode::Down if self.cmd_search && ctrl => self.history_step(1),
             KeyCode::Up => self.history_step(-1),
             KeyCode::Down => self.history_step(1),
             KeyCode::Tab => self.complete(1),
@@ -1044,13 +1173,15 @@ impl App {
 
     fn history_step(&mut self, dir: isize) {
         let search = self.cmd_search;
-        let entries: Vec<String> = self
+        let entries: Vec<(String, Option<SearchKind>)> = self
             .history
             .iter()
-            .filter_map(|h| match h.strip_prefix("search ") {
-                Some(q) if search => Some(q.to_string()),
-                _ if search => None,
-                _ => Some(h.clone()),
+            .filter_map(|h| {
+                if search {
+                    Self::search_history_entry(h).map(|(kind, q)| (q.to_string(), Some(kind)))
+                } else {
+                    Some((h.clone(), None))
+                }
             })
             .collect();
         if entries.is_empty() {
@@ -1068,7 +1199,10 @@ impl App {
         } else {
             let pos = pos.max(0) as usize;
             self.hist_pos = Some(pos);
-            self.cmd_buf = entries[pos].clone();
+            self.cmd_buf = entries[pos].0.clone();
+            if let Some(kind) = entries[pos].1 {
+                self.search_kind = kind;
+            }
         }
     }
 
@@ -1146,6 +1280,8 @@ impl App {
             Command::ShowResults => self.set_view(View::Results),
             Command::ShowQueue => self.set_view(View::Queue),
             Command::ShowPlaylists => self.set_view(View::Playlists),
+            Command::ShowRecent => self.set_view(View::RecentlyPlayed),
+            Command::ShowMostPlayed => self.set_view(View::MostPlayed),
             Command::Volume(a) => self.set_volume(a),
             Command::Seek(a) => self.seek(a),
             Command::Shuffle => self.toggle_shuffle(),
@@ -1183,6 +1319,8 @@ impl App {
 
     fn artist_target(&self) -> Option<Track> {
         let sel = self.selected();
+        let history_tracks = (self.view == View::RecentlyPlayed || self.view == View::MostPlayed)
+            .then(|| self.history_tracks(self.view == View::MostPlayed));
         let highlighted = match self.view {
             View::Results => self.results.get(sel),
             View::Queue => self.queue.get(sel),
@@ -1192,6 +1330,9 @@ impl App {
                 .and_then(|n| self.store.playlists.get(n))
                 .and_then(|t| t.get(sel)),
             View::Playlists => None,
+            View::RecentlyPlayed | View::MostPlayed => {
+                history_tracks.as_deref().and_then(|t| t.get(sel))
+            }
         };
         highlighted.or_else(|| self.now_track()).cloned()
     }
@@ -1272,9 +1413,7 @@ impl App {
             tracks.extend(found.into_iter().filter(|t| {
                 !known.contains(&t.id)
                     && (t.artist.to_lowercase() == wanted
-                        || t.artist_names()
-                            .iter()
-                            .any(|a| a.to_lowercase() == wanted))
+                        || t.artist_names().iter().any(|a| a.to_lowercase() == wanted))
             }));
             Ok(tracks.into())
         });
@@ -1287,11 +1426,7 @@ impl App {
         let Some(album) = track.album.clone() else {
             return self.error("No album known for this song");
         };
-        let artist = track
-            .artist_names()
-            .into_iter()
-            .next()
-            .unwrap_or_default();
+        let artist = track.artist_names().into_iter().next().unwrap_or_default();
         let busy = format!("Loading album \u{201c}{album}\u{201d}");
         let title = format!("Album: {album}");
         self.spawn_loader(title, busy, move || {
@@ -1406,7 +1541,11 @@ impl App {
         let c = self.picks.get(self.pick_sel).cloned();
         self.close_collection_pick();
         let Some(c) = c else { return };
-        let kind = if c.browse_id.starts_with("VL") { "Playlist" } else { "Album" };
+        let kind = if c.browse_id.starts_with("VL") {
+            "Playlist"
+        } else {
+            "Album"
+        };
         let busy = format!("Loading \u{201c}{}\u{201d}", c.title);
         let title = format!("{kind}: {}", c.title);
         self.spawn_loader(title, busy, move || {
@@ -1418,7 +1557,11 @@ impl App {
         let c = self.picks.get(self.pick_sel).cloned();
         self.close_collection_pick();
         let Some(c) = c else { return };
-        let kind = if c.browse_id.starts_with("VL") { "Playlist" } else { "Album" };
+        let kind = if c.browse_id.starts_with("VL") {
+            "Playlist"
+        } else {
+            "Album"
+        };
         let target_name = c.title.clone();
         self.busy = Some(format!("Saving {kind} \u{201c}{target_name}\u{201d}"));
         let tx = self.tx.clone();
@@ -1699,6 +1842,7 @@ impl App {
             PlayerEvent::FileLoaded => {
                 self.play_state = PlayState::Playing;
                 self.fail_streak = 0;
+                self.record_play();
                 self.prefetch_next();
                 if let Some((id, pos)) = self.resume.take() {
                     let ok = self.now_track().is_some_and(|t| {
@@ -1720,9 +1864,7 @@ impl App {
                 self.fail_streak += 1;
                 if self.fail_streak >= 3 {
                     self.stop_playback();
-                    self.error(format!(
-                        "Playback failed 3 times in a row: {msg}"
-                    ));
+                    self.error(format!("Playback failed 3 times in a row: {msg}"));
                 } else {
                     self.error(format!(
                         "Can't play \u{201c}{name}\u{201d} ({msg}) — skipping"
@@ -1737,6 +1879,16 @@ impl App {
                     self.error("mpv exited unexpectedly; it will restart on next play");
                 }
             }
+        }
+    }
+
+    fn record_play(&mut self) {
+        let Some(track) = self.now_track().cloned() else {
+            return;
+        };
+        self.history_data.record(&track);
+        if let Err(e) = self.history_data.save() {
+            self.error(format!("Could not save history: {e:#}"));
         }
     }
 
@@ -1876,6 +2028,9 @@ impl App {
                     let i = self.selected();
                     self.activate_at(View::Playlists, i);
                 }
+                View::RecentlyPlayed | View::MostPlayed if self.len_of(self.view) > 0 => {
+                    self.activate_at(self.view, self.selected());
+                }
                 _ => self.error("Nothing to play — search first with :search \"query\""),
             }
             return;
@@ -1916,7 +2071,24 @@ impl App {
                     self.play_playlist_from(&name, 0);
                 }
             }
+            View::RecentlyPlayed | View::MostPlayed => {
+                let tracks = self.history_tracks(view == View::MostPlayed);
+                if let Some(track) = tracks.get(i).cloned() {
+                    self.play_history_track(track, view == View::MostPlayed);
+                }
+            }
         }
+    }
+
+    fn play_history_track(&mut self, track: Track, most_played: bool) {
+        self.radio = self.history_tracks(most_played);
+        self.radio_played.clear();
+        let index = self
+            .radio
+            .iter()
+            .position(|candidate| candidate.id == track.id)
+            .unwrap_or(0);
+        self.play_radio(index);
     }
 
     fn play_result(&mut self, i: usize) {
@@ -2196,6 +2368,10 @@ impl App {
                 Some(n) => self.load_playlist(&n, false),
                 None => self.error("No playlist selected"),
             },
+            View::RecentlyPlayed | View::MostPlayed => match self.selected_track() {
+                Some(t) => self.enqueue(t),
+                None => self.error("No history entry selected"),
+            },
             View::Queue => self.info("Already in the queue"),
         }
     }
@@ -2298,6 +2474,9 @@ impl App {
             View::Results => {
                 self.info("Results can't be deleted — they are replaced by the next search")
             }
+            View::RecentlyPlayed | View::MostPlayed => {
+                self.info("History entries are kept for play counts and cannot be deleted")
+            }
         }
     }
 
@@ -2319,7 +2498,11 @@ impl App {
             .store
             .resolve_exact(name)
             .unwrap_or_else(|| name.to_string());
-        let exists = self.store.playlists.get(&key).is_some_and(|l| !l.is_empty());
+        let exists = self
+            .store
+            .playlists
+            .get(&key)
+            .is_some_and(|l| !l.is_empty());
         if exists && !force {
             return self.error(format!(
                 "Playlist \u{201c}{key}\u{201d} already exists. :save! {key} replaces it, :append {key} adds the queue to the end"
@@ -2355,7 +2538,10 @@ impl App {
             }
         };
         let n = self.results.len();
-        let key = self.store.resolve_exact(&target_name).unwrap_or(target_name);
+        let key = self
+            .store
+            .resolve_exact(&target_name)
+            .unwrap_or(target_name);
         self.store
             .playlists
             .insert(key.clone(), self.results.clone());
@@ -2379,6 +2565,7 @@ impl App {
                 .and_then(|n| self.store.playlists.get(n))
                 .and_then(|l| l.get(i))
                 .cloned(),
+            View::RecentlyPlayed | View::MostPlayed => self.selected_track(),
         };
         let Some(track) = track else {
             return self.error("Select a track in Results or Queue first");

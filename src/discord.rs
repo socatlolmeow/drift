@@ -66,7 +66,11 @@ impl Discord {
             return;
         };
 
-        let position = if position.is_finite() { position.max(0.0) } else { 0.0 };
+        let position = if position.is_finite() {
+            position.max(0.0)
+        } else {
+            0.0
+        };
         let start = now_ms() - (position * 1000.0) as i64;
         let paused = state == PlayState::Paused;
         let same_track = self.track.as_deref() == Some(track.id.as_str());

@@ -46,9 +46,10 @@ Search, queue and play music with no account, no login and no browser.
 - Vim-style keybinds: `j`/`k`, `gg`/`ge`, counts like `5j`, and `:` for the command line
 - Synced lyrics in a side panel or fullscreen, with the current line filled in as it's sung
 - Queue and playlists. Build a queue, save and reorder playlists, or import any YouTube / YouTube Music playlist by URL
+- Listening history: Recently Played and Most Played tabs, with persistent play counts
 - Discovery: `ga` for an artist's songs, `gs` for similar songs, `gb` for the album, and `:album` / `:playlist` to search for albums and playlists
 - A song menu (`G`) to play a song, queue it, add it to a playlist, jump to the artist or see its info
-- A command palette with completion and history
+- A command palette (`:search`, `:seek`, `:vol`, `:import` and more) with completion and history
 - Your queue and position are restored the next time you start Drift
 - Media keys and `playerctl` on Linux (MPRIS), plus optional Discord rich presence
 - One TOML file for volume, seek step, shuffle/repeat defaults, accent color and custom keybinds
@@ -265,6 +266,7 @@ A key is a character (`"x"`, `"G"`, `"/"`), a name (`space`, `enter`, `esc`, `ta
 | `go_top` `go_bottom` | `gg` `home` / `ge` `end` |
 | `next_view` `prev_view` | `tab` / `backtab` |
 | `view_results` `view_queue` `view_playlists` | `gr` / `gq` / `gp` |
+| `toggle_queue_sidebar` | `Q` |
 | `activate` | `enter` |
 | `pause` | `space` |
 | `next` `prev` | `n` `>` / `N` `<` |

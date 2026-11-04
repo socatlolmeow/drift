@@ -25,6 +25,8 @@ pub enum Command {
     ShowResults,
     ShowQueue,
     ShowPlaylists,
+    ShowRecent,
+    ShowMostPlayed,
     Volume(Amount),
     Seek(Amount),
     Shuffle,
@@ -64,6 +66,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "results",
     "queue",
     "playlists",
+    "recent",
+    "mostplayed",
     "volume",
     "seek",
     "shuffle",
@@ -166,6 +170,8 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
         "results" | "res" => ShowResults,
         "queue" => ShowQueue,
         "playlists" | "pls" => ShowPlaylists,
+        "recent" | "history" => ShowRecent,
+        "mostplayed" | "most" => ShowMostPlayed,
         "volume" | "vol" | "v" => Volume(parse_amount(arg, "volume")?),
         "seek" => Seek(parse_amount(arg, "seek")?),
         "shuffle" => Shuffle,
@@ -277,6 +283,8 @@ mod tests {
         );
         assert!(parse("playlist").is_err());
         assert_eq!(parse("playlists"), Ok(Some(Command::ShowPlaylists)));
+        assert_eq!(parse("history"), Ok(Some(Command::ShowRecent)));
+        assert_eq!(parse("mostplayed"), Ok(Some(Command::ShowMostPlayed)));
     }
 
     #[test]
@@ -295,10 +303,7 @@ mod tests {
             parse(r#"savealbum "Abbey Road""#),
             Ok(Some(Command::SaveAlbum(Some("Abbey Road".into()))))
         );
-        assert_eq!(
-            parse("saveresults"),
-            Ok(Some(Command::SaveResults(None)))
-        );
+        assert_eq!(parse("saveresults"), Ok(Some(Command::SaveResults(None))));
         assert_eq!(
             parse(r#"saveresults "My Hits""#),
             Ok(Some(Command::SaveResults(Some("My Hits".into()))))

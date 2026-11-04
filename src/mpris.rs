@@ -77,7 +77,11 @@ mod imp {
                 let _ = self.controls.set_metadata(meta);
                 self.secs = u64::MAX;
             }
-            let pos = if position.is_finite() { position.max(0.0) } else { 0.0 };
+            let pos = if position.is_finite() {
+                position.max(0.0)
+            } else {
+                0.0
+            };
             let secs = pos as u64;
             if state == self.state && secs == self.secs {
                 return;

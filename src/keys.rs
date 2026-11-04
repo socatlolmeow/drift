@@ -21,6 +21,9 @@ pub enum Action {
     ViewResults,
     ViewQueue,
     ViewPlaylists,
+    ViewRecent,
+    ViewMostPlayed,
+    ToggleQueueSidebar,
     Activate,
     Pause,
     Next,
@@ -65,6 +68,9 @@ const DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("view_results", Action::ViewResults, &["gr"]),
     ("view_queue", Action::ViewQueue, &["gq"]),
     ("view_playlists", Action::ViewPlaylists, &["gp"]),
+    ("view_recent", Action::ViewRecent, &["gh"]),
+    ("view_most_played", Action::ViewMostPlayed, &["gm"]),
+    ("toggle_queue_sidebar", Action::ToggleQueueSidebar, &["Q"]),
     ("activate", Action::Activate, &["enter"]),
     ("pause", Action::Pause, &["space"]),
     ("next", Action::Next, &["n", ">"]),
@@ -198,6 +204,14 @@ impl Keymap {
                 }
             }
         }
+        for (i, (short, _)) in map.iter().enumerate() {
+            if map.iter().skip(i + 1).any(|(long, _)| {
+                (short.len() < long.len() && long.starts_with(short))
+                    || (long.len() < short.len() && short.starts_with(long))
+            }) {
+                return Err("key sequences cannot be prefixes of one another".into());
+            }
+        }
         Ok(Keymap(map))
     }
 
@@ -300,6 +314,7 @@ mod tests {
         assert_eq!(run(&map, "dd"), Some(Action::Delete));
         assert_eq!(run(&map, "ctrl+d"), Some(Action::HalfPageDown));
         assert_eq!(run(&map, "G"), Some(Action::Menu));
+        assert_eq!(run(&map, "Q"), Some(Action::ToggleQueueSidebar));
         assert_eq!(run(&map, "space"), Some(Action::Pause));
         assert!(matches!(map.lookup(&seq("g")), Lookup::Pending));
         assert!(matches!(map.lookup(&seq("gz")), Lookup::Nothing));
@@ -328,6 +343,16 @@ mod tests {
     }
 
     #[test]
+    fn queue_sidebar_can_be_rebound_or_unbound() {
+        let map = Keymap::build(&custom(&[("toggle_queue_sidebar", &["ctrl+q"])])).unwrap();
+        assert_eq!(run(&map, "ctrl+q"), Some(Action::ToggleQueueSidebar));
+        assert_eq!(run(&map, "Q"), None);
+
+        let map = Keymap::build(&custom(&[("toggle_queue_sidebar", &[])])).unwrap();
+        assert_eq!(run(&map, "Q"), None);
+    }
+
+    #[test]
     fn custom_wins_over_other_defaults() {
         let map = Keymap::build(&custom(&[("quit", &["x"])])).unwrap();
         assert_eq!(run(&map, "x"), Some(Action::Quit));
@@ -345,6 +370,7 @@ mod tests {
 
     #[test]
     fn bad_config_is_rejected() {
+        assert!(Keymap::build(&custom(&[("quit", &["g"]), ("add", &["gg"])])).is_err());
         assert!(Keymap::build(&custom(&[("fly", &["f"])])).is_err());
         assert!(Keymap::build(&custom(&[("quit", &["ctrl+nope"])])).is_err());
         assert!(Keymap::build(&custom(&[("quit", &["z"]), ("add", &["z"])])).is_err());

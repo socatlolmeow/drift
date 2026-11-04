@@ -74,9 +74,14 @@ pub fn search_collections(query: &str, kind: Kind) -> Result<Vec<Collection>, St
 /* browse_id: MPREb_... for an album, VL... for a playlist */
 pub fn browse_tracks(browse_id: &str, album: &str, artist: &str) -> Result<Vec<Track>, String> {
     let playlist = browse_id.starts_with("VL");
-    let v = post(BROWSE_ENDPOINT, json!({ "browseId": browse_id })).map_err(|e| format!("{e:#}"))?;
+    let v =
+        post(BROWSE_ENDPOINT, json!({ "browseId": browse_id })).map_err(|e| format!("{e:#}"))?;
     let mut tracks = parse_browse(&v, playlist);
-    let mut next = if playlist { find_continuation(&v) } else { None };
+    let mut next = if playlist {
+        find_continuation(&v)
+    } else {
+        None
+    };
     let mut pages = 0;
     while let Some(tok) = next.take() {
         if pages >= 5 || tracks.len() >= 300 {
@@ -195,10 +200,7 @@ fn find_continuation(v: &Value) -> Option<String> {
                 .get("nextContinuationData")
                 .or_else(|| map.get("nextRadioContinuationData"))
                 .and_then(|c| c.get("continuation"))
-                .or_else(|| {
-                    map.get("continuationCommand")
-                        .and_then(|c| c.get("token"))
-                })
+                .or_else(|| map.get("continuationCommand").and_then(|c| c.get("token")))
                 .and_then(Value::as_str);
             match token {
                 Some(t) => Some(t.to_string()),
@@ -513,7 +515,9 @@ fn parse_panel_item(item: &Value) -> Option<Track> {
     if title.is_empty() {
         return None;
     }
-    let byline = item.pointer("/longBylineText/runs").and_then(Value::as_array);
+    let byline = item
+        .pointer("/longBylineText/runs")
+        .and_then(Value::as_array);
     let meta = run_segments(byline);
     let artist = meta
         .first()
@@ -562,15 +566,15 @@ fn ytdlp_search(query: &str) -> Result<Vec<Track>> {
 fn ytdlp_entries(target: &str) -> Result<Vec<Track>> {
     let mut cmd = Command::new("yt-dlp");
     cmd.args([
-            "--flat-playlist",
-            "--dump-json",
-            "--no-warnings",
-            "--ignore-errors",
-            "--socket-timeout",
-            "15",
-        ])
-        .arg(target)
-        .stdin(Stdio::null());
+        "--flat-playlist",
+        "--dump-json",
+        "--no-warnings",
+        "--ignore-errors",
+        "--socket-timeout",
+        "15",
+    ])
+    .arg(target)
+    .stdin(Stdio::null());
     let out = crate::sys::no_window(&mut cmd)
         .output()
         .map_err(|e| anyhow!("could not run yt-dlp ({e}); is it installed and on PATH?"))?;
@@ -682,9 +686,7 @@ mod tests {
 
     #[test]
     fn keeps_linked_artist_runs_whole() {
-        let link = |text: &str, id: &str| {
-            json!({"text": text, "navigationEndpoint": {"browseEndpoint": {"browseId": id}}})
-        };
+        let link = |text: &str, id: &str| json!({"text": text, "navigationEndpoint": {"browseEndpoint": {"browseId": id}}});
         let resp = json!([{"musicResponsiveListItemRenderer": {
             "overlay": {"watchEndpoint": {"videoId": "abcdefghijk"}},
             "flexColumns": [
@@ -704,7 +706,8 @@ mod tests {
 
     #[test]
     fn reads_ytdlp_artists_list() {
-        let line = r#"{"id":"abcdefghijk","title":"T","artist":"A, B","artists":["A","B"],"duration":10}"#;
+        let line =
+            r#"{"id":"abcdefghijk","title":"T","artist":"A, B","artists":["A","B"],"duration":10}"#;
         let t = parse_ytdlp_lines(line);
         assert_eq!(t[0].artists, ["A", "B"]);
         assert_eq!(t[0].artist, "A, B");
@@ -802,9 +805,17 @@ not json
             }})
         };
         let resp = json!([
-            row("MPREb_abc", "Discovery", json!([{"text": "Album"}, {"text": " • "},
-                {"text": "Daft Punk"}, {"text": " • "}, {"text": "2001"}])),
-            row("VLPL123", "Mix", json!([{"text": "Playlist"}, {"text": " • "}, {"text": "Someone"}])),
+            row(
+                "MPREb_abc",
+                "Discovery",
+                json!([{"text": "Album"}, {"text": " • "},
+                {"text": "Daft Punk"}, {"text": " • "}, {"text": "2001"}])
+            ),
+            row(
+                "VLPL123",
+                "Mix",
+                json!([{"text": "Playlist"}, {"text": " • "}, {"text": "Someone"}])
+            ),
             row("UCartist", "Artist", json!([{"text": "Artist"}])),
         ]);
         let a = parse_collections(&resp, Kind::Album);

@@ -128,16 +128,32 @@ impl Store {
         }
     }
 
-    fn read_disk() -> Option<BTreeMap<String, Vec<Track>>> {
-        let text = fs::read_to_string(Self::path().ok()?).ok()?;
-        serde_json::from_str::<Store>(&text).ok().map(|s| s.playlists)
+    fn read_disk(path: &Path) -> Result<Option<BTreeMap<String, Vec<Track>>>> {
+        match fs::read_to_string(path) {
+            Ok(text) => Ok(Some(
+                serde_json::from_str::<Store>(&text)
+                    .with_context(|| format!("invalid playlist file {}", path.display()))?
+                    .playlists,
+            )),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+        }
     }
 
     pub fn save(&mut self) -> Result<()> {
-        if let Some(disk) = Self::read_disk() {
+        self.save_to(&Self::path()?)
+    }
+
+    fn save_to(&mut self, path: &Path) -> Result<()> {
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        #[cfg(unix)]
+        let _lock = lock_file(&path.with_extension("lock"))?;
+        if let Some(disk) = Self::read_disk(path)? {
             self.playlists = merge(&self.base, &self.playlists, disk);
         }
-        write_atomic(&Self::path()?, &serde_json::to_string_pretty(&*self)?)?;
+        write_atomic(path, &serde_json::to_string_pretty(&*self)?)?;
         self.base = self.playlists.clone();
         Ok(())
     }
@@ -167,6 +183,21 @@ impl Store {
             }
         })
     }
+}
+
+#[cfg(unix)]
+fn lock_file(path: &Path) -> Result<fs::File> {
+    use std::os::fd::AsRawFd;
+
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(file)
 }
 
 #[cfg(test)]
@@ -208,5 +239,20 @@ mod tests {
         assert_eq!(s.resolve_exact("rock"), None);
         assert_eq!(s.resolve("rock").as_deref(), Some("rock-classics"));
         assert_eq!(s.resolve_exact("jazz").as_deref(), Some("Jazz"));
+    }
+
+    #[test]
+    fn save_does_not_overwrite_corrupt_disk_file() {
+        let dir = std::env::temp_dir().join(format!("drift-store-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("playlists.json");
+        fs::write(&path, "invalid JSON").unwrap();
+
+        let mut store = Store::default();
+        store.playlists.insert("mix".into(), Vec::new());
+        assert!(store.save_to(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "invalid JSON");
+
+        fs::remove_dir_all(dir).unwrap();
     }
 }

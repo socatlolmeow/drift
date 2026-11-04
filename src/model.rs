@@ -215,7 +215,10 @@ mod tests {
     #[test]
     fn artist_splitting_edge_cases() {
         assert_eq!(split_artists("hall & oates"), ["hall & oates"]);
-        assert_eq!(split_artists(" Tyler, The Creator "), ["Tyler, The Creator"]);
+        assert_eq!(
+            split_artists(" Tyler, The Creator "),
+            ["Tyler, The Creator"]
+        );
         assert_eq!(split_artists("A Feat. B"), ["A", "B"]);
         assert_eq!(
             split_artists("Drake, Hall & Oates"),

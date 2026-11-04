@@ -75,7 +75,10 @@ fn from_entry(entry: &Value) -> Option<Lyrics> {
     if let Some(s) = text("syncedLyrics") {
         let lines = parse_lrc(s);
         if !lines.is_empty() {
-            return Some(Lyrics { lines, synced: true });
+            return Some(Lyrics {
+                lines,
+                synced: true,
+            });
         }
     }
     let plain = text("plainLyrics")?;
@@ -122,11 +125,7 @@ fn query(params: &[(&str, &str)]) -> Result<Vec<Value>, String> {
 }
 
 pub fn fetch(track: &Track) -> Result<Option<Lyrics>, String> {
-    let artist = track
-        .artist_names()
-        .into_iter()
-        .next()
-        .unwrap_or_default();
+    let artist = track.artist_names().into_iter().next().unwrap_or_default();
     let exact = query(&[("track_name", &track.title), ("artist_name", &artist)])?;
     if let Some(l) = pick(&exact, track.duration) {
         return Ok(Some(l));
@@ -142,7 +141,8 @@ mod tests {
 
     #[test]
     fn parses_timestamps_and_skips_metadata() {
-        let lines = parse_lrc("[ar:Someone]\n[00:12.50]first\n[01:02.00][00:30.25]shared\n[00:45.00]");
+        let lines =
+            parse_lrc("[ar:Someone]\n[00:12.50]first\n[01:02.00][00:30.25]shared\n[00:45.00]");
         let got: Vec<(f64, &str)> = lines.iter().map(|l| (l.at, l.text.as_str())).collect();
         assert_eq!(
             got,

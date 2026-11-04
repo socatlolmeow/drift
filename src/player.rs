@@ -227,7 +227,10 @@ impl Player {
                         let text = v.get("text").and_then(Value::as_str).unwrap_or("").trim();
                         match text.strip_prefix("ERROR: ") {
                             Some(t) if prefix == "ytdl_hook" => reason = Some(ytdl_reason(t)),
-                            _ if reason.is_none() && !text.is_empty() && !text.starts_with("Failed to open") => {
+                            _ if reason.is_none()
+                                && !text.is_empty()
+                                && !text.starts_with("Failed to open") =>
+                            {
                                 reason = Some(text.lines().next().unwrap_or(text).to_string());
                             }
                             _ => {}
@@ -344,13 +347,20 @@ pub fn fetch_audio(id: &str, audio: &Audio) -> Result<PathBuf, String> {
     let dir = audio_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
     let mut cmd = ytdlp(audio);
-    cmd.args(["-f", "bestaudio/best", "--no-playlist", "--no-warnings", "--no-progress", "--no-mtime"])
-        .arg("-P")
-        .arg(&dir)
-        .args(["-o", "%(id)s.%(ext)s"])
-        .arg(format!("https://music.youtube.com/watch?v={id}"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null());
+    cmd.args([
+        "-f",
+        "bestaudio/best",
+        "--no-playlist",
+        "--no-warnings",
+        "--no-progress",
+        "--no-mtime",
+    ])
+    .arg("-P")
+    .arg(&dir)
+    .args(["-o", "%(id)s.%(ext)s"])
+    .arg(format!("https://music.youtube.com/watch?v={id}"))
+    .stdin(Stdio::null())
+    .stdout(Stdio::null());
     crate::sys::no_window(&mut cmd);
     let out = cmd
         .output()
@@ -372,9 +382,15 @@ pub fn fetch_audio(id: &str, audio: &Audio) -> Result<PathBuf, String> {
 /// instead of waiting for the whole file to download.
 pub fn resolve_stream(id: &str, audio: &Audio) -> Result<String, String> {
     let mut cmd = ytdlp(audio);
-    cmd.args(["-f", "bestaudio/best", "--no-playlist", "--no-warnings", "-g"])
-        .arg(format!("https://music.youtube.com/watch?v={id}"))
-        .stdin(Stdio::null());
+    cmd.args([
+        "-f",
+        "bestaudio/best",
+        "--no-playlist",
+        "--no-warnings",
+        "-g",
+    ])
+    .arg(format!("https://music.youtube.com/watch?v={id}"))
+    .stdin(Stdio::null());
     crate::sys::no_window(&mut cmd);
     let out = cmd
         .output()
@@ -505,7 +521,9 @@ mod tests {
     #[test]
     fn ytdl_reason_is_trimmed() {
         assert_eq!(
-            ytdl_reason("[youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot. Use --cookies. \n"),
+            ytdl_reason(
+                "[youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot. Use --cookies. \n"
+            ),
             "Sign in to confirm you're not a bot. Use --cookies."
         );
         assert_eq!(

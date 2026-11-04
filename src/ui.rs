@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, Level, LyricsState, MenuAction, Mode, PlayState, View, NO_KEY};
+use crate::app::{App, Level, LyricsState, MenuAction, Mode, PlayState, SearchKind, View, NO_KEY};
 use crate::lyrics::Lyrics;
 use crate::model::{fmt_time, Track};
 
@@ -52,6 +52,17 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 Layout::horizontal([Constraint::Min(40), Constraint::Percentage(40)]).areas(body);
             draw_lyrics(f, app, side, false);
             list
+        } else if body.width >= 100
+            && app.queue_sidebar
+            && matches!(
+                app.view,
+                View::Results | View::RecentlyPlayed | View::MostPlayed
+            )
+        {
+            let [list, side] =
+                Layout::horizontal([Constraint::Min(50), Constraint::Length(32)]).areas(body);
+            draw_queue_sidebar(f, app, side);
+            list
         } else {
             body
         };
@@ -59,6 +70,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             View::Results => draw_tracks(f, app, list, View::Results),
             View::Queue => draw_tracks(f, app, list, View::Queue),
             View::Playlists => draw_playlists(f, app, list),
+            View::RecentlyPlayed => draw_history(f, app, list, false),
+            View::MostPlayed => draw_history(f, app, list, true),
         }
     }
     draw_now_playing(f, app, playing);
@@ -94,7 +107,10 @@ fn hints(items: &[(&str, &str)], width: u16) -> Option<Line<'static>> {
             spans.push(Span::styled("  ", dim()));
             len += 2;
         }
-        spans.push(Span::styled(key.to_string(), Style::new().fg(Color::Yellow)));
+        spans.push(Span::styled(
+            key.to_string(),
+            Style::new().fg(Color::Yellow),
+        ));
         spans.push(Span::styled(format!(" {label}"), dim()));
         len += key.chars().count() + 1 + label.chars().count();
     }
@@ -106,7 +122,11 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
     let [name, tabs, right] = Layout::horizontal([
         Constraint::Length(10),
         Constraint::Min(10),
-        Constraint::Length(app.busy.as_ref().map_or(0, |b| b.chars().count() as u16 + 5)),
+        Constraint::Length(
+            app.busy
+                .as_ref()
+                .map_or(0, |b| b.chars().count() as u16 + 5),
+        ),
     ])
     .areas(area);
 
@@ -122,6 +142,8 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
         ("Results", app.results.len()),
         ("Queue", app.queue.len()),
         ("Playlists", app.store.playlists.len()),
+        ("Recently Played", app.history_data.entries.len()),
+        ("Most Played", app.history_data.entries.len()),
     ];
     let active = Style::new()
         .fg(app.accent)
@@ -201,7 +223,12 @@ fn track_rows<'a>(
         .collect()
 }
 
-fn track_table<'a>(rows: Vec<Row<'a>>, show_album: bool, block: Block<'a>, accent: Color) -> Table<'a> {
+fn track_table<'a>(
+    rows: Vec<Row<'a>>,
+    show_album: bool,
+    block: Block<'a>,
+    accent: Color,
+) -> Table<'a> {
     let mut header = vec!["", "  #", "Title", "Artist"];
     let mut widths = vec![
         Constraint::Length(2),
@@ -248,9 +275,21 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
         .border_style(Style::new().fg(app.accent));
     if !tracks.is_empty() {
         let keys: &[(&str, &str)] = if view == View::Queue {
-            &[("⏎", "play"), ("x", "remove"), ("J/K", "move"), ("G", "menu"), ("?", "help")]
+            &[
+                ("⏎", "play"),
+                ("x", "remove"),
+                ("J/K", "move"),
+                ("G", "menu"),
+                ("?", "help"),
+            ]
         } else {
-            &[("⏎", "play"), ("a", "queue"), ("G", "menu"), ("/", "search"), ("?", "help")]
+            &[
+                ("⏎", "play"),
+                ("a", "queue"),
+                ("G", "menu"),
+                ("/", "search"),
+                ("?", "help"),
+            ]
         };
         if let Some(h) = hints(keys, area.width) {
             block = block.title_bottom(h);
@@ -279,6 +318,181 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
     f.render_stateful_widget(table, area, &mut app.states[idx]);
 }
 
+fn clipped(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+    if width <= 1 {
+        return "…".chars().take(width).collect();
+    }
+    text.chars().take(width - 1).collect::<String>() + "…"
+}
+
+fn draw_queue_sidebar(f: &mut Frame, app: &App, area: Rect) {
+    let mut block = Block::bordered()
+        .title(format!(" Queue ({}) ", app.queue.len()))
+        .border_style(Style::new().fg(app.accent));
+    if let Some(h) = hints(&[("gq", "full queue")], area.width) {
+        block = block.title_bottom(h);
+    }
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let text_width = inner.width.saturating_sub(1) as usize;
+    let mut lines = Vec::new();
+    let current = app.now_track();
+    if let Some(track) = current {
+        let label = if app.play_state == PlayState::Stopped {
+            " Selected"
+        } else {
+            " Now playing"
+        };
+        lines.push(Line::styled(label, Style::new().fg(app.accent).bold()));
+        lines.push(Line::styled(
+            format!("  {}", clipped(&track.title, text_width.saturating_sub(2))),
+            Style::new().fg(Color::White).bold(),
+        ));
+        lines.push(Line::styled(
+            format!("  {}", clipped(&track.artist, text_width.saturating_sub(2))),
+            dim(),
+        ));
+    } else {
+        lines.push(Line::styled(" Nothing playing", dim()));
+    }
+
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(" Up next", header_style()));
+
+    let current_queue_index = app.current.filter(|&i| {
+        app.queue
+            .get(i)
+            .zip(current)
+            .is_some_and(|(queued, now)| queued.id == now.id)
+    });
+    let upcoming = app
+        .queue
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| current_queue_index.is_none_or(|current| *i > current));
+
+    let mut shown = 0usize;
+    for (i, track) in upcoming {
+        if lines.len() >= inner.height as usize {
+            break;
+        }
+        shown += 1;
+        lines.push(Line::from(vec![
+            Span::styled(format!(" {:>2} ", i + 1), dim()),
+            Span::styled(
+                clipped(&track.title, text_width.saturating_sub(5)),
+                Style::new().fg(Color::Gray),
+            ),
+        ]));
+    }
+    if shown == 0 {
+        lines.push(Line::styled(" No queued tracks", dim()));
+    }
+
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+}
+
+fn draw_history(f: &mut Frame, app: &mut App, area: Rect, most_played: bool) {
+    let entries = app.history_data.sorted(most_played);
+    let title = if most_played {
+        " Most Played "
+    } else {
+        " Recently Played "
+    };
+    let mut block = Block::bordered()
+        .title(format!("{title}({}) ", entries.len()))
+        .border_style(Style::new().fg(app.accent));
+    if !entries.is_empty() {
+        if let Some(h) = hints(
+            &[("⏎", "play"), ("a", "queue"), ("G", "menu"), ("?", "help")],
+            area.width,
+        ) {
+            block = block.title_bottom(h);
+        }
+    }
+    if entries.is_empty() {
+        return empty_hint(
+            f,
+            block,
+            area,
+            &[
+                "",
+                "No listening history yet.",
+                "Play a song to start building it.",
+            ],
+        );
+    }
+
+    let show_album = area.width >= 88;
+    let now = playing_marker(app);
+    let playing = now.as_ref().map(|(id, marker)| (id.as_str(), *marker));
+    let mut rows = Vec::with_capacity(entries.len());
+    for (i, entry) in entries.iter().enumerate() {
+        let track = &entry.track;
+        let is_playing = playing.is_some_and(|(id, _)| id == track.id);
+        let marker = if is_playing {
+            playing.map_or("", |p| p.1)
+        } else {
+            ""
+        };
+        let mut cells = vec![
+            Cell::from(marker),
+            Cell::from(format!("{:>3}", i + 1)).style(dim()),
+            Cell::from(track.title.as_str()),
+            Cell::from(track.artist.as_str()),
+        ];
+        if show_album {
+            cells.push(Cell::from(track.album.as_deref().unwrap_or("")));
+        }
+        cells.push(
+            Cell::from(track.duration.map_or(String::new(), |d| fmt_time(d as f64))).style(dim()),
+        );
+        cells.push(Cell::from(format!("{}", entry.play_count)).style(dim()));
+        let row = Row::new(cells);
+        rows.push(if is_playing {
+            row.style(Style::new().fg(Color::Green).add_modifier(Modifier::BOLD))
+        } else {
+            row
+        });
+    }
+    let mut header = vec!["", "  #", "Title", "Artist"];
+    let mut widths = vec![
+        Constraint::Length(2),
+        Constraint::Length(4),
+        Constraint::Fill(3),
+        Constraint::Fill(2),
+    ];
+    if show_album {
+        header.push("Album");
+        widths.push(Constraint::Fill(2));
+    }
+    header.extend(["Time", "Plays"]);
+    widths.extend([Constraint::Length(7), Constraint::Length(7)]);
+    let table = Table::new(rows, widths)
+        .header(Row::new(header).style(header_style()))
+        .block(block)
+        .column_spacing(1)
+        .row_highlight_style(selected_style(app.accent))
+        .highlight_symbol(CURSOR);
+    f.render_stateful_widget(
+        table,
+        area,
+        &mut app.states[if most_played {
+            View::MostPlayed.idx()
+        } else {
+            View::RecentlyPlayed.idx()
+        }],
+    );
+}
+
 fn draw_open_playlist(f: &mut Frame, app: &mut App, area: Rect, name: &str) {
     let now = playing_marker(app);
     let playing = now.as_ref().map(|(id, marker)| (id.as_str(), *marker));
@@ -290,7 +504,13 @@ fn draw_open_playlist(f: &mut Frame, app: &mut App, area: Rect, name: &str) {
         .title(format!(" {name} ({}) ", tracks.len()))
         .border_style(Style::new().fg(app.accent));
     if !tracks.is_empty() {
-        let keys = [("⏎", "play"), ("a", "queue"), ("x", "remove"), ("G", "menu"), ("←", "back")];
+        let keys = [
+            ("⏎", "play"),
+            ("a", "queue"),
+            ("x", "remove"),
+            ("G", "menu"),
+            ("←", "back"),
+        ];
         if let Some(h) = hints(&keys, area.width) {
             block = block.title_bottom(h);
         }
@@ -384,7 +604,10 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
         Some(tracks) if !tracks.is_empty() => {
             let show_album = right.width >= 70;
             let rows = track_rows(tracks, None, show_album);
-            f.render_widget(track_table(rows, show_album, preview_block, app.accent), right);
+            f.render_widget(
+                track_table(rows, show_album, preview_block, app.accent),
+                right,
+            );
         }
         _ => f.render_widget(preview_block, right),
     }
@@ -437,8 +660,11 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     }
     if !pending.is_empty() {
         block = block.title_bottom(
-            Line::styled(format!(" {pending} "), Style::new().fg(Color::Yellow).bold())
-                .right_aligned(),
+            Line::styled(
+                format!(" {pending} "),
+                Style::new().fg(Color::Yellow).bold(),
+            )
+            .right_aligned(),
         );
     }
 
@@ -468,12 +694,18 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
     ];
     for i in 0..vol_cells {
         flags.push(if i < vol_fill.min(vol_cells) {
-            Span::styled("━", Style::new().fg(gradient(i as f64 / vol_cells as f64, app.accent)))
+            Span::styled(
+                "━",
+                Style::new().fg(gradient(i as f64 / vol_cells as f64, app.accent)),
+            )
         } else {
             Span::styled("─", dim())
         });
     }
-    flags.push(Span::styled(format!(" {:>3}%", app.volume), Style::new().fg(Color::Gray)));
+    flags.push(Span::styled(
+        format!(" {:>3}%", app.volume),
+        Style::new().fg(Color::Gray),
+    ));
     flags.push(Span::raw(" "));
     let flags_w: usize = flags.iter().map(|s| s.content.chars().count()).sum();
     let [title_area, flags_area] =
@@ -494,13 +726,15 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
             spans.push(Span::styled("⏸ ", Style::new().fg(Color::Yellow)));
             spans.push(Span::raw("     "));
         }
-        _ => {
-        }
+        _ => {}
     }
     spans.push(Span::raw(" "));
     match (app.now_track(), active) {
         (Some(t), true) => {
-            spans.push(Span::styled(t.title.clone(), Style::new().fg(Color::White).bold()));
+            spans.push(Span::styled(
+                t.title.clone(),
+                Style::new().fg(Color::White).bold(),
+            ));
             spans.push(Span::styled("  ·  ", dim()));
             spans.push(Span::styled(t.artist.clone(), Style::new().fg(app.accent)));
         }
@@ -533,7 +767,10 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
         line.push(if !active || app.duration <= 0.0 {
             Span::styled("─", dim())
         } else if i < head {
-            Span::styled("━", Style::new().fg(gradient(i as f64 / bar_w.max(1) as f64, app.accent)))
+            Span::styled(
+                "━",
+                Style::new().fg(gradient(i as f64 / bar_w.max(1) as f64, app.accent)),
+            )
         } else if i == head {
             Span::styled("●", Style::new().fg(Color::White).bold())
         } else {
@@ -608,7 +845,11 @@ fn lyric_rows(
                 (false, _) | (_, 1..=2) => Color::Gray,
                 _ => Color::DarkGray,
             };
-            rows.extend(parts.into_iter().map(|p| Line::styled(p, Style::new().fg(color))));
+            rows.extend(
+                parts
+                    .into_iter()
+                    .map(|p| Line::styled(p, Style::new().fg(color))),
+            );
         }
         if roomy {
             rows.push(Line::raw(""));
@@ -629,7 +870,10 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, full: bool) {
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(dim())
-            .title(Span::styled(" ♪ Lyrics ", Style::new().fg(app.accent).bold()));
+            .title(Span::styled(
+                " ♪ Lyrics ",
+                Style::new().fg(app.accent).bold(),
+            ));
         let inner = block.inner(area);
         f.render_widget(block, area);
         inner.inner(Margin::new(1, 0))
@@ -687,7 +931,11 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, full: bool) {
     .min(max_start);
     app.lyrics_scroll = start;
     let visible: Vec<Line> = rows.into_iter().skip(start).take(height).collect();
-    let align = if full { Alignment::Center } else { Alignment::Left };
+    let align = if full {
+        Alignment::Center
+    } else {
+        Alignment::Left
+    };
     f.render_widget(Paragraph::new(visible).alignment(align), inner);
 }
 
@@ -705,10 +953,19 @@ fn draw_toast(f: &mut Frame, app: &App, body: Rect) {
     let max_text = (body.width as usize).saturating_sub(8).min(120);
     let mut text: String = s.text.lines().next().unwrap_or("").to_string();
     if text.chars().count() > max_text {
-        text = text.chars().take(max_text.saturating_sub(1)).collect::<String>() + "…";
+        text = text
+            .chars()
+            .take(max_text.saturating_sub(1))
+            .collect::<String>()
+            + "…";
     }
     let w = (text.chars().count() as u16 + 6).min(body.width);
-    let rect = Rect::new(body.right().saturating_sub(w + 1).max(body.x), body.bottom().saturating_sub(4), w, 3);
+    let rect = Rect::new(
+        body.right().saturating_sub(w + 1).max(body.x),
+        body.bottom().saturating_sub(4),
+        w,
+        3,
+    );
     f.render_widget(Clear, rect);
     f.render_widget(
         Paragraph::new(Line::from(vec![
@@ -732,11 +989,18 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
         ("Title", t.title.clone()),
         ("Artist", t.artist.clone()),
         ("Album", t.album.clone().unwrap_or_else(|| "—".into())),
-        ("Length", t.duration.map_or("—".into(), |d| fmt_time(d as f64))),
+        (
+            "Length",
+            t.duration.map_or("—".into(), |d| fmt_time(d as f64)),
+        ),
         ("ID", t.id.clone()),
     ];
     let label_w = 8usize;
-    let widest = rows.iter().map(|(_, v)| v.chars().count()).max().unwrap_or(0);
+    let widest = rows
+        .iter()
+        .map(|(_, v)| v.chars().count())
+        .max()
+        .unwrap_or(0);
     let w = ((label_w + widest + 6).max(40) as u16).min(area.width.min(80));
     let value_w = (w as usize).saturating_sub(label_w + 4).max(1);
     let mut lines: Vec<Line> = Vec::new();
@@ -764,7 +1028,10 @@ fn draw_info(f: &mut Frame, app: &App, area: Rect) {
             Block::bordered()
                 .border_type(BorderType::Rounded)
                 .border_style(Style::new().fg(app.accent))
-                .title(Span::styled(" ♪ Song info ", Style::new().fg(app.accent).bold()))
+                .title(Span::styled(
+                    " ♪ Song info ",
+                    Style::new().fg(app.accent).bold(),
+                ))
                 .title_bottom(Line::styled(" any key to close ", dim()).right_aligned()),
         ),
         popup,
@@ -801,13 +1068,18 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("results", "show the Results tab"),
     ("queue", "show the Queue tab"),
     ("playlists", "show the Playlists tab"),
+    ("recent", "show recently played songs"),
+    ("mostplayed", "show songs ordered by play count"),
     ("volume", "set volume  ·  50 | +5 | -5"),
     ("seek", "seek  ·  90 | 1:30 | +10 | -10"),
     ("shuffle", "toggle shuffle"),
     ("repeat", "repeat  ·  off | all | one"),
     ("save", "save the queue as a playlist"),
     ("savealbum", "save album as a playlist  ·  savealbum [name]"),
-    ("saveresults", "save results as a playlist  ·  saveresults [name]"),
+    (
+        "saveresults",
+        "save results as a playlist  ·  saveresults [name]",
+    ),
     ("load", "load a playlist into the queue"),
     ("append", "append a playlist to the queue"),
     ("delpl", "delete a playlist"),
@@ -815,7 +1087,10 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("import", "import a YouTube / YT Music playlist URL"),
     ("artist", "songs by the selected artist"),
     ("similar", "radio: songs similar to the selected one"),
-    ("album", "open the selected song's album, or :album <query> to search"),
+    (
+        "album",
+        "open the selected song's album, or :album <query> to search",
+    ),
     ("playlist", "search YouTube Music playlists"),
     ("lyrics", "show or hide the lyrics panel"),
     ("help", "show key bindings"),
@@ -833,7 +1108,7 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
     let search = app.cmd_search;
     let matches = app.command_matches();
     let recent = if search && app.cmd_buf.is_empty() {
-        app.recent_searches(5)
+        app.recent_searches(4)
     } else {
         Vec::new()
     };
@@ -841,7 +1116,11 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
     let typing_args = !search && app.cmd_buf.contains(' ');
 
     let list_rows = if search {
-        recent.len().max(1)
+        2 + if recent.is_empty() {
+            0
+        } else {
+            recent.len() + 1
+        }
     } else if typing_args {
         1
     } else {
@@ -854,24 +1133,22 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
     }
 
     let (title, prompt) = if search {
-        (" Search YouTube Music ", " / ")
+        (
+            format!(" Search YouTube Music · {} ", app.search_kind.label()),
+            " / ".to_string(),
+        )
     } else {
-        (" Command ", " : ")
+        (" Command ".to_string(), " : ".to_string())
     };
     let footer = if search {
-        " ⏎ search · ↑↓ history · Esc close "
+        " ↑↓ type · Ctrl-↑↓ history · ⏎ search · Esc close "
     } else {
         " ⏎ run · Tab complete · Esc close "
     };
     let block = Block::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(Style::new().fg(if search { app.accent } else { app.accent }))
-        .title(Span::styled(
-            title,
-            Style::new()
-                .fg(if search { app.accent } else { app.accent })
-                .bold(),
-        ))
+        .border_style(Style::new().fg(app.accent))
+        .title(Span::styled(title, Style::new().fg(app.accent).bold()))
         .title_bottom(Line::styled(footer, dim()).right_aligned());
     let inner = block.inner(popup);
     f.render_widget(Clear, popup);
@@ -891,10 +1168,7 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
     let shown_w = shown.chars().count();
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled(
-                prompt,
-                Style::new().fg(Color::Black).bg(if search { app.accent } else { app.accent }).bold(),
-            ),
+            Span::styled(prompt, Style::new().fg(Color::Black).bg(app.accent).bold()),
             Span::raw(" "),
             Span::styled(shown, Style::new().fg(Color::White)),
         ])),
@@ -910,12 +1184,31 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
 
     let mut lines: Vec<Line> = Vec::new();
     if search {
-        if recent.is_empty() {
-            lines.push(Line::styled(" type what you want to hear, then press Enter", dim()));
-        } else {
+        let mut type_line = vec![Span::styled(" Search as ", dim())];
+        for (i, kind) in SearchKind::ALL.into_iter().enumerate() {
+            if i > 0 {
+                type_line.push(Span::raw("  "));
+            }
+            let style = if kind == app.search_kind {
+                Style::new().fg(Color::Black).bg(app.accent).bold()
+            } else {
+                Style::new().fg(Color::Gray)
+            };
+            type_line.push(Span::styled(format!(" {} ", kind.label()), style));
+        }
+        lines.push(Line::from(type_line));
+        lines.push(Line::styled(
+            " ↑↓ choose type · Enter search · Ctrl-↑↓ history",
+            dim(),
+        ));
+        if !recent.is_empty() {
+            lines.push(Line::styled(
+                " Recent searches",
+                Style::new().fg(app.accent).bold(),
+            ));
             for r in recent {
                 lines.push(Line::from(vec![
-                    Span::styled(" ↺ ", dim()),
+                    Span::styled("  ↺ ", Style::new().fg(app.accent)),
                     Span::styled(r.to_string(), Style::new().fg(Color::Gray)),
                 ]));
             }
@@ -926,12 +1219,18 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
             Line::styled(" ⏎ run", dim())
         } else {
             Line::from(vec![
-                Span::styled(format!(" {first_word} "), Style::new().fg(app.accent).bold()),
+                Span::styled(
+                    format!(" {first_word} "),
+                    Style::new().fg(app.accent).bold(),
+                ),
                 Span::styled(d, dim()),
             ])
         });
     } else if matches.is_empty() {
-        lines.push(Line::styled(" no matching command", Style::new().fg(Color::Red)));
+        lines.push(Line::styled(
+            " no matching command",
+            Style::new().fg(Color::Red),
+        ));
     } else {
         let sel = app.cycling().then_some(app.cmd_sel);
         let start = sel.map_or(0, |s| (s + 1).saturating_sub(MAX_ROWS));
@@ -941,7 +1240,10 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
             let text: String = text.chars().take(width).collect();
             lines.push(if Some(i) == sel {
                 let pad = width.saturating_sub(text.chars().count());
-                Line::styled(format!("{}{}", cursor_text(&text), " ".repeat(pad)), selected_style(app.accent))
+                Line::styled(
+                    format!("{}{}", cursor_text(&text), " ".repeat(pad)),
+                    selected_style(app.accent),
+                )
             } else {
                 Line::from(vec![
                     Span::styled(
@@ -961,8 +1263,16 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
     if items.is_empty() {
         return;
     }
-    let label_w = items.iter().map(|i| i.label.chars().count()).max().unwrap_or(0);
-    let detail_w = items.iter().map(|i| i.detail.chars().count()).max().unwrap_or(0);
+    let label_w = items
+        .iter()
+        .map(|i| i.label.chars().count())
+        .max()
+        .unwrap_or(0);
+    let detail_w = items
+        .iter()
+        .map(|i| i.detail.chars().count())
+        .max()
+        .unwrap_or(0);
     let body_w = 5 + label_w + if detail_w > 0 { detail_w + 3 } else { 0 } + 2;
     let title_w = app.menu_title.chars().count() + 6;
     let w = body_w.max(title_w).clamp(34, 60) as u16;
@@ -1011,7 +1321,10 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
                 }
                 let text: String = text.chars().take(width).collect();
                 let pad = width.saturating_sub(text.chars().count());
-                return Line::styled(format!("{}{}", cursor_text(&text), " ".repeat(pad)), selected_style(accent));
+                return Line::styled(
+                    format!("{}{}", cursor_text(&text), " ".repeat(pad)),
+                    selected_style(accent),
+                );
             }
             let danger = matches!(
                 it.action,
@@ -1074,8 +1387,12 @@ const HELP: &[(&str, &str)] = &[
     ("j k / ↓ ↑", "move (counts work: 5j)"),
     ("gg  ge  Home  End", "top / bottom (5gg or 5ge → row 5)"),
     ("Ctrl-d  Ctrl-u", "half page down / up"),
-    ("Tab  S-Tab", "cycle Results / Queue / Playlists"),
-    ("gr  gq  gp", "jump to Results / Queue / Playlists"),
+    ("Tab  S-Tab", "cycle Results / Queue / Playlists / History"),
+    ("Q", "show or hide the queue sidebar"),
+    (
+        "gr  gq  gp  gh  gm",
+        "jump to Results / Queue / Playlists / Recent / Most Played",
+    ),
     ("PLAYBACK", "#"),
     (
         "Enter",
@@ -1095,7 +1412,10 @@ const HELP: &[(&str, &str)] = &[
         "gb  or  :album",
         "open the album of the selected song; :album <query> searches albums",
     ),
-    (":playlist <query>", "search YouTube Music playlists (pick one, then ⏎)"),
+    (
+        ":playlist <query>",
+        "search YouTube Music playlists (pick one, then ⏎)",
+    ),
     (
         "gs  or  :similar",
         "radio: load songs similar to the selected one and start playing them",
@@ -1103,7 +1423,10 @@ const HELP: &[(&str, &str)] = &[
     ("SONG MENU  ( G )", "#"),
     ("G", "menu for the highlighted song or playlist"),
     ("j k  ⏎", "move / choose (the yellow letter is a shortcut)"),
-    ("p n a g s b l", "play · next · queue · artist · similar · album · playlist"),
+    (
+        "p n a g s b l",
+        "play · next · queue · artist · similar · album · playlist",
+    ),
     ("x i", "remove · song info"),
     ("Esc  q  G", "close (Esc goes back from a sub-menu)"),
     ("QUEUE", "#"),
@@ -1117,7 +1440,10 @@ const HELP: &[(&str, &str)] = &[
     ("→ or l", "open the highlighted playlist"),
     ("← h Esc Backspace", "back to the playlist list"),
     ("COMMANDS  ( : or / )", "#"),
-    (":search \"q\"", "search YouTube Music (/ prefills it)"),
+    (
+        ":search \"q\"",
+        "search songs; / then ↑↓ switches Songs / Albums / Playlists",
+    ),
     (":play [N]", "play or resume; N plays row N"),
     (":pause :resume :stop", "playback state"),
     (":next  :prev", "skip"),
@@ -1130,6 +1456,7 @@ const HELP: &[(&str, &str)] = &[
         "play all results / remove from queue",
     ),
     (":clear", "empty the queue"),
+    (":recent  :mostplayed", "show recently or most played songs"),
     (
         ":save n  :load n",
         "save the queue as a playlist / load one (:save! n replaces an existing one)",
@@ -1138,10 +1465,7 @@ const HELP: &[(&str, &str)] = &[
         ":savealbum [n]",
         "save album or current album results as a playlist",
     ),
-    (
-        ":saveresults [n]",
-        "save current results as a playlist",
-    ),
+    (":saveresults [n]", "save current results as a playlist"),
     (
         ":append n  :delpl n",
         "append a playlist to the queue / delete it",
@@ -1285,7 +1609,10 @@ fn draw_collection_picker(f: &mut Frame, app: &App, area: Rect) {
             let text: String = text.chars().take(inner).collect();
             if i == app.pick_sel {
                 let pad = inner.saturating_sub(text.chars().count());
-                Line::styled(format!("{}{}", cursor_text(&text), " ".repeat(pad)), selected_style(app.accent))
+                Line::styled(
+                    format!("{}{}", cursor_text(&text), " ".repeat(pad)),
+                    selected_style(app.accent),
+                )
             } else {
                 Line::raw(text)
             }

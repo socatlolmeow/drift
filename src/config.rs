@@ -21,7 +21,10 @@ where
     impl<'de> Visitor<'de> for ColorVisitor {
         type Value = Color;
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            write!(f, "a color name (e.g. \"cyan\") or hex value (e.g. \"#FF8800\")")
+            write!(
+                f,
+                "a color name (e.g. \"cyan\") or hex value (e.g. \"#FF8800\")"
+            )
         }
         fn visit_str<E: de::Error>(self, v: &str) -> Result<Color, E> {
             Color::from_str(v).map_err(de::Error::custom)
@@ -134,7 +137,9 @@ pub struct Ui {
 
 impl Default for Ui {
     fn default() -> Self {
-        Ui { accent: default_accent() }
+        Ui {
+            accent: default_accent(),
+        }
     }
 }
 
@@ -230,6 +235,7 @@ cookies_from_browser = \"{cookies}\"
 # backspace, delete, home, end, pageup, pagedown, up, down, left, right, f1-f12),
 # ctrl+key (\"ctrl+d\") or a sequence (\"gg\", \"ctrl+x g\"). An empty list unbinds.
 # quit = \"Q\"
+# toggle_queue_sidebar = \"Q\"
 # move_down = [\"j\", \"down\"]
 # go_top = [\"gg\", \"home\"]
 ",
@@ -260,7 +266,13 @@ cookies_from_browser = \"{cookies}\"
         let text = match fs::read_to_string(&path) {
             Ok(t) => t,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                let _ = Self::write(&Self::render(&Playback::default(), &Artist::default(), &Ui::default(), &Discord::default(), &Audio::default()));
+                let _ = Self::write(&Self::render(
+                    &Playback::default(),
+                    &Artist::default(),
+                    &Ui::default(),
+                    &Discord::default(),
+                    &Audio::default(),
+                ));
                 return (Config::default(), None);
             }
             Err(e) => {
@@ -346,7 +358,13 @@ pub fn migrate_legacy() {
             let _ = Session::write(&s);
         }
     }
-    let _ = Config::write(&Config::render(&p, &Artist::default(), &Ui::default(), &Discord::default(), &Audio::default()));
+    let _ = Config::write(&Config::render(
+        &p,
+        &Artist::default(),
+        &Ui::default(),
+        &Discord::default(),
+        &Audio::default(),
+    ));
 }
 
 #[cfg(test)]
@@ -355,7 +373,13 @@ mod tests {
 
     #[test]
     fn default_file_parses_back() {
-        let text = Config::render(&Playback::default(), &Artist::default(), &Ui::default(), &Discord::default(), &Audio::default());
+        let text = Config::render(
+            &Playback::default(),
+            &Artist::default(),
+            &Ui::default(),
+            &Discord::default(),
+            &Audio::default(),
+        );
         let c: Config = toml::from_str(&text).unwrap();
         let d = Playback::default();
         assert_eq!(c.playback.volume, d.volume);
@@ -421,8 +445,16 @@ mod tests {
         assert!(toml::from_str::<Config>("[ui]\naccent = \"notacolor\"").is_err());
 
         // Roundtrip: render then parse
-        let u = Ui { accent: Color::Blue };
-        let text = Config::render(&Playback::default(), &Artist::default(), &u, &Discord::default(), &Audio::default());
+        let u = Ui {
+            accent: Color::Blue,
+        };
+        let text = Config::render(
+            &Playback::default(),
+            &Artist::default(),
+            &u,
+            &Discord::default(),
+            &Audio::default(),
+        );
         let c: Config = toml::from_str(&text).unwrap();
         assert_eq!(c.ui.accent, Color::Blue);
     }
@@ -435,6 +467,11 @@ mod tests {
             toml::from_str("[keys]\nquit = \"Q\"\nmove_down = [\"e\", \"down\"]").unwrap();
         assert!(Keymap::build(&c.keys).is_ok());
         assert_eq!(c.keys.len(), 2);
+
+        let c: Config =
+            toml::from_str("[keys]\ntoggle_queue_sidebar = \"ctrl+q\"").unwrap();
+        assert!(Keymap::build(&c.keys).is_ok());
+        assert!(c.keys.contains_key("toggle_queue_sidebar"));
     }
 
     #[test]
@@ -464,7 +501,13 @@ mod tests {
             download_max_minutes: 30,
             cookies_from_browser: "chrome".into(),
         };
-        let text = Config::render(&Playback::default(), &Artist::default(), &Ui::default(), &Discord::default(), &a);
+        let text = Config::render(
+            &Playback::default(),
+            &Artist::default(),
+            &Ui::default(),
+            &Discord::default(),
+            &a,
+        );
         let c: Config = toml::from_str(&text).unwrap();
         assert!(c.audio.download);
         assert_eq!(c.audio.download_max_minutes, 30);

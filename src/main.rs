@@ -2,6 +2,7 @@ mod app;
 mod command;
 mod config;
 mod discord;
+mod history;
 mod keys;
 mod lyrics;
 mod model;
@@ -36,7 +37,9 @@ Inside the player press ? for key bindings and :help for commands.";
 
 fn tool_version(name: &str) -> Option<String> {
     let mut cmd = Command::new(name);
-    cmd.arg("--version").stdin(Stdio::null()).stderr(Stdio::null());
+    cmd.arg("--version")
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
     let out = sys::no_window(&mut cmd).output().ok()?;
     out.status.success().then(|| {
         String::from_utf8_lossy(&out.stdout)
