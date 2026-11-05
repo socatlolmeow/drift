@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Result};
 use serde_json::{json, Value};
@@ -387,6 +387,8 @@ pub fn resolve_stream(id: &str, audio: &Audio) -> Result<String, String> {
         "bestaudio/best",
         "--no-playlist",
         "--no-warnings",
+        "-O",
+        "%(available_at|0)s",
         "-g",
     ])
     .arg(format!("https://music.youtube.com/watch?v={id}"))
@@ -402,6 +404,10 @@ pub fn resolve_stream(id: &str, audio: &Audio) -> Result<String, String> {
         .find(|l| l.starts_with("http"))
         .filter(|_| out.status.success())
     {
+        // YouTube answers 403 on a fresh stream URL until its `available_at` time.
+        if let Some(at) = stdout.lines().find_map(|l| l.trim().parse::<u64>().ok()) {
+            std::thread::sleep(wait_until(at, SystemTime::now()));
+        }
         return Ok(url.to_string());
     }
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -411,6 +417,14 @@ pub fn resolve_stream(id: &str, audio: &Audio) -> Result<String, String> {
         .find_map(|l| l.strip_prefix("ERROR: "))
         .map(ytdl_reason)
         .unwrap_or_else(|| "yt-dlp returned no stream URL".into()))
+}
+
+fn wait_until(at: u64, now: SystemTime) -> Duration {
+    let target = UNIX_EPOCH + Duration::from_secs(at);
+    target
+        .duration_since(now)
+        .unwrap_or_default()
+        .min(Duration::from_secs(30))
 }
 
 fn prune(dir: &std::path::Path) {
@@ -473,6 +487,15 @@ fn parse_event(v: &Value) -> Option<PlayerEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wait_until_available_at() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        assert_eq!(wait_until(1_004, now), Duration::from_secs(4));
+        assert_eq!(wait_until(0, now), Duration::ZERO);
+        assert_eq!(wait_until(999, now), Duration::ZERO);
+        assert_eq!(wait_until(5_000, now), Duration::from_secs(30));
+    }
 
     #[test]
     #[ignore]
