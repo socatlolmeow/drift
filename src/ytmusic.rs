@@ -94,9 +94,9 @@ pub fn browse_tracks(browse_id: &str, album: &str, artist: &str) -> Result<Vec<T
         if more.is_empty() {
             break;
         }
-        let known: std::collections::HashSet<String> =
+        let mut known: std::collections::HashSet<String> =
             tracks.iter().map(|t| t.id.clone()).collect();
-        tracks.extend(more.into_iter().filter(|t| !known.contains(&t.id)));
+        tracks.extend(more.into_iter().filter(|t| known.insert(t.id.clone())));
         next = find_continuation(&v);
     }
     if tracks.is_empty() {

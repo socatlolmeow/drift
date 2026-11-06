@@ -1,6 +1,6 @@
 /* MPRIS (media keys, playerctl, waybar...) on Linux; a no-op elsewhere. */
 
-#[allow(dead_code)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Cmd {
     Play,

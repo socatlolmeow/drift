@@ -77,6 +77,24 @@ impl Session {
     }
 
     fn sanitize(&mut self) {
+        // Keep the selected track selected when invalid queue entries are
+        // removed before it.
+        if let Some(current) = self.current {
+            if current < self.queue.len() {
+                if is_valid_id(&self.queue[current].id) {
+                    self.current = Some(
+                        self.queue
+                            .iter()
+                            .take(current)
+                            .filter(|t| is_valid_id(&t.id))
+                            .count(),
+                    );
+                } else {
+                    self.current = None;
+                    self.position = 0.0;
+                }
+            }
+        }
         self.queue.retain(|t| is_valid_id(&t.id));
         if !self.position.is_finite() || self.position < 0.0 {
             self.position = 0.0;
@@ -85,6 +103,9 @@ impl Session {
             Some(_) if self.queue.is_empty() => self.current = None,
             Some(c) if c >= self.queue.len() => self.current = Some(self.queue.len() - 1),
             _ => {}
+        }
+        if self.current.is_none() {
+            self.position = 0.0;
         }
     }
 
@@ -121,6 +142,33 @@ mod tests {
         };
         s.sanitize();
         assert_eq!((s.queue.len(), s.current, s.position), (1, Some(0), 0.0));
+    }
+
+    #[test]
+    fn sanitize_preserves_current_track_when_dropping_bad_entries() {
+        let mut s = Session {
+            queue: vec![track("bad"), track("aaaaaaaaaaa"), track("bbbbbbbbbbb")],
+            current: Some(1),
+            position: 12.0,
+        };
+        s.sanitize();
+        assert_eq!(s.queue.len(), 2);
+        assert_eq!(s.current, Some(0));
+        assert_eq!(s.queue[0].id, "aaaaaaaaaaa");
+        assert_eq!(s.position, 12.0);
+    }
+
+    #[test]
+    fn sanitize_clears_invalid_current_track() {
+        let mut s = Session {
+            queue: vec![track("aaaaaaaaaaa"), track("bad"), track("bbbbbbbbbbb")],
+            current: Some(1),
+            position: 12.0,
+        };
+        s.sanitize();
+        assert_eq!(s.current, None);
+        assert_eq!(s.position, 0.0);
+        assert_eq!(s.queue.len(), 2);
     }
 
     #[test]

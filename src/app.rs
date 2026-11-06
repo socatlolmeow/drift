@@ -1689,16 +1689,16 @@ impl App {
                 self.loading_more = false;
                 match result {
                     Ok(page) => {
-                        let known: HashSet<&str> = self
+                        let mut known: HashSet<String> = self
                             .results
                             .iter()
                             .chain(&self.buffered)
-                            .map(|t| t.id.as_str())
+                            .map(|t| t.id.clone())
                             .collect();
                         let fresh: Vec<Track> = page
                             .tracks
                             .into_iter()
-                            .filter(|t| !known.contains(t.id.as_str()))
+                            .filter(|t| known.insert(t.id.clone()))
                             .collect();
                         self.buffered.extend(fresh);
                         self.next_page = page.next;
@@ -1828,6 +1828,20 @@ impl App {
     }
 
     fn on_player(&mut self, ev: PlayerEvent) {
+        // While resolving the next track, mpv can still report events for
+        // the previous one. Those must not update or advance the new track.
+        if (self.want.is_some() || self.play_state == PlayState::Stopped)
+            && matches!(
+                &ev,
+                PlayerEvent::Position(_)
+                    | PlayerEvent::Duration(_)
+                    | PlayerEvent::FileLoaded
+                    | PlayerEvent::EndOfFile
+                    | PlayerEvent::LoadError(_)
+            )
+        {
+            return;
+        }
         match ev {
             PlayerEvent::Position(Some(p)) => self.position = p,
             PlayerEvent::Position(None) => {}
@@ -1874,7 +1888,7 @@ impl App {
             }
             PlayerEvent::Died => {
                 self.player = None;
-                if self.play_state != PlayState::Stopped {
+                if self.play_state != PlayState::Stopped && self.want.is_none() {
                     self.play_state = PlayState::Stopped;
                     self.error("mpv exited unexpectedly; it will restart on next play");
                 }
@@ -2151,6 +2165,7 @@ impl App {
 
     fn stop_playback(&mut self) {
         self.want = None;
+        self.resume = None;
         if let Some(p) = self.player.as_mut() {
             let _ = p.stop();
         }
@@ -2767,10 +2782,58 @@ mod tests {
         app.next_page = None;
         app.load_more();
         assert_eq!(app.results.len(), 25);
+
+        app.on_event(AppEvent::More {
+            generation: app.results_gen,
+            result: Ok(Page {
+                tracks: vec![
+                    app.results[24].clone(),
+                    track("99999999999", "New song"),
+                    track("99999999999", "Duplicate in same page"),
+                ],
+                next: None,
+            }),
+        });
+        assert_eq!(app.results.len() + app.buffered.len(), 26);
+        assert_eq!(app.results.last().unwrap().title, "New song");
     }
 
     fn now_title(app: &App) -> Option<&str> {
         app.now_track().map(|t| t.title.as_str())
+    }
+
+    fn check_pending_playback_events(app: &mut App) {
+        app.queue = vec![track("aaaaaaaaaaa", "A"), track("bbbbbbbbbbb", "B")];
+        app.current = Some(0);
+        app.on_radio = false;
+        app.want = Some("aaaaaaaaaaa".into());
+        app.play_state = PlayState::Loading;
+        app.position = 0.0;
+        app.duration = 100.0;
+        app.fail_streak = 0;
+        let recorded = app.history_data.entries.len();
+        app.on_player(PlayerEvent::EndOfFile);
+        app.on_player(PlayerEvent::Position(Some(90.0)));
+        app.on_player(PlayerEvent::Duration(Some(500.0)));
+        app.on_player(PlayerEvent::FileLoaded);
+        app.on_player(PlayerEvent::LoadError("previous track failed".into()));
+        assert_eq!(app.current, Some(0));
+        assert!(app.play_state == PlayState::Loading);
+        assert_eq!(
+            (app.position, app.duration, app.fail_streak),
+            (0.0, 100.0, 0)
+        );
+        assert_eq!(app.history_data.entries.len(), recorded);
+
+        app.on_player(PlayerEvent::Died);
+        assert!(app.play_state == PlayState::Loading);
+        app.resume = Some(("aaaaaaaaaaa".into(), 25.0));
+        app.stop_playback();
+        app.on_player(PlayerEvent::FileLoaded);
+        app.on_player(PlayerEvent::EndOfFile);
+        assert!(app.play_state == PlayState::Stopped);
+        assert!(app.want.is_none() && app.resume.is_none());
+        assert_eq!(app.history_data.entries.len(), recorded);
     }
 
     fn check_playlist_playback(app: &mut App) {
@@ -2953,6 +3016,7 @@ mod tests {
         app.run_command("remove");
         assert_eq!(app.queue.len(), 1);
 
+        check_pending_playback_events(&mut app);
         check_playlist_playback(&mut app);
 
         // Test savealbum and saveresults

@@ -468,8 +468,7 @@ mod tests {
         assert!(Keymap::build(&c.keys).is_ok());
         assert_eq!(c.keys.len(), 2);
 
-        let c: Config =
-            toml::from_str("[keys]\ntoggle_queue_sidebar = \"ctrl+q\"").unwrap();
+        let c: Config = toml::from_str("[keys]\ntoggle_queue_sidebar = \"ctrl+q\"").unwrap();
         assert!(Keymap::build(&c.keys).is_ok());
         assert!(c.keys.contains_key("toggle_queue_sidebar"));
     }
