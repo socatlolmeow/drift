@@ -8,6 +8,7 @@ use ratatui::widgets::TableState;
 
 use crate::command::{self, Amount, Command, COMMAND_NAMES};
 use crate::config::{self, Audio, Config};
+use crate::cover;
 use crate::discord::Discord;
 use crate::history::History;
 use crate::keys::{Action, Key, Keymap, Lookup};
@@ -18,6 +19,8 @@ use crate::player::{self, Player, PlayerEvent};
 use crate::session::Session;
 use crate::store::Store;
 use crate::ytmusic::{self, Kind, Page};
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::StatefulProtocol;
 
 pub enum AppEvent {
     Player(u64, PlayerEvent),
@@ -33,6 +36,10 @@ pub enum AppEvent {
     Lyrics {
         id: String,
         result: Result<Option<Lyrics>, String>,
+    },
+    Cover {
+        id: String,
+        image: Option<image::RgbImage>,
     },
     Collections {
         id: u64,
@@ -99,6 +106,13 @@ pub enum Mode {
     Menu,
     Info,
     Lyrics,
+    LyricsArtwork,
+}
+
+impl Mode {
+    pub fn is_lyrics(self) -> bool {
+        matches!(self, Self::Lyrics | Self::LyricsArtwork)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -240,6 +254,12 @@ pub struct App {
     pub lyrics_panel: bool,
     pub lyrics_scroll: usize,
     pub lyrics_id: Option<String>,
+    pub cover: Option<StatefulProtocol>,
+    /* Small cover for terminals without image support, drawn with half blocks. */
+    pub cover_thumb: Option<image::RgbImage>,
+    pub image_picker: Option<Picker>,
+    pub cover_id: Option<String>,
+    pub cover_loading: bool,
     history: Vec<String>,
     hist_pos: Option<usize>,
     pub count: Option<usize>,
@@ -348,6 +368,11 @@ impl App {
             lyrics_panel: false,
             lyrics_scroll: 0,
             lyrics_id: None,
+            cover: None,
+            cover_thumb: None,
+            image_picker: None,
+            cover_id: None,
+            cover_loading: false,
             history: Vec::new(),
             hist_pos: None,
             count: None,
@@ -468,6 +493,7 @@ impl App {
         self.tick = self.tick.wrapping_add(1);
         self.load_more();
         self.sync_lyrics();
+        self.sync_cover();
         self.sync_mpris();
         self.sync_discord();
         /* open the picker once nothing else is being typed, so keys aren't hijacked */
@@ -573,6 +599,12 @@ impl App {
         self.current.and_then(|i| self.queue.get(i))
     }
 
+    pub fn set_image_picker(&mut self, picker: Picker) {
+        if cover::supports_protocol(picker.protocol_type()) {
+            self.image_picker = Some(picker);
+        }
+    }
+
     pub fn on_key(&mut self, key: KeyEvent) {
         if key.kind == KeyEventKind::Release {
             return;
@@ -589,7 +621,7 @@ impl App {
             Mode::ConfirmDelete => self.key_confirm_delete(key),
             Mode::Menu => self.key_menu(key),
             Mode::Info => self.key_info(key),
-            Mode::Lyrics => self.key_lyrics(key),
+            Mode::Lyrics | Mode::LyricsArtwork => self.key_lyrics(key),
             Mode::Normal => self.key_normal(key),
         }
     }
@@ -978,12 +1010,21 @@ impl App {
     fn key_lyrics(&mut self, key: KeyEvent) {
         let scroll = self.lyrics_scroll;
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q' | 'F' | 'L') => self.mode = Mode::Normal,
+            KeyCode::Esc | KeyCode::Char('q' | 'L') => self.mode = Mode::Normal,
+            KeyCode::Char('F') => {
+                self.mode = if self.mode == Mode::Lyrics {
+                    Mode::LyricsArtwork
+                } else {
+                    Mode::Normal
+                };
+            }
             KeyCode::Char('j') | KeyCode::Down => self.lyrics_scroll = scroll.saturating_add(1),
             KeyCode::Char('k') | KeyCode::Up => self.lyrics_scroll = scroll.saturating_sub(1),
             KeyCode::Char(' ') => self.toggle_pause(),
             KeyCode::Char('n') | KeyCode::Char('>') => self.next(),
             KeyCode::Char('N') | KeyCode::Char('<') => self.prev(),
+            KeyCode::Char('s') => self.toggle_shuffle(),
+            KeyCode::Char('r') => self.cycle_repeat(),
             KeyCode::Char('h') | KeyCode::Left => self.seek(Amount::Delta(-self.seek_step)),
             KeyCode::Char('l') | KeyCode::Right => self.seek(Amount::Delta(self.seek_step)),
             KeyCode::Char('+') | KeyCode::Char('=') => {
@@ -997,7 +1038,7 @@ impl App {
     }
 
     fn sync_lyrics(&mut self) {
-        if !self.lyrics_panel && self.mode != Mode::Lyrics {
+        if !self.lyrics_panel && !self.mode.is_lyrics() {
             return;
         }
         let Some(track) = self
@@ -1020,6 +1061,27 @@ impl App {
                 id: track.id,
                 result,
             });
+        });
+    }
+
+    fn sync_cover(&mut self) {
+        if self.mode != Mode::LyricsArtwork || self.play_state == PlayState::Stopped {
+            return;
+        }
+        let Some(id) = self.now_track().map(|track| track.id.clone()) else {
+            return;
+        };
+        if self.cover_id.as_ref() == Some(&id) {
+            return;
+        }
+        self.cover_id = Some(id.clone());
+        self.cover = None;
+        self.cover_thumb = None;
+        self.cover_loading = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let image = cover::fetch(&id);
+            let _ = tx.send(AppEvent::Cover { id, image });
         });
     }
 
@@ -1758,6 +1820,20 @@ impl App {
                     Ok(None) => LyricsState::Missing,
                     Err(e) => LyricsState::Failed(e),
                 };
+            }
+            AppEvent::Cover { id, image } => {
+                if self.cover_id.as_deref() == Some(id.as_str()) {
+                    match (&self.image_picker, image) {
+                        (Some(picker), Some(image)) => {
+                            self.cover = Some(
+                                picker.new_resize_protocol(image::DynamicImage::ImageRgb8(image)),
+                            );
+                        }
+                        (None, Some(image)) => self.cover_thumb = Some(cover::thumbnail(&image)),
+                        _ => {}
+                    }
+                    self.cover_loading = false;
+                }
             }
             AppEvent::Audio { id, result } => self.on_audio(id, result),
             AppEvent::Stream { id, result } => self.on_stream(id, result),

@@ -44,7 +44,7 @@ Search, queue and play music with no account, no login and no browser.
 ## Features
 
 - Vim-style keybinds: `j`/`k`, `gg`/`ge`, counts like `5j`, and `:` for the command line
-- Synced lyrics in a side panel or fullscreen, with the current line filled in as it's sung
+- Synced lyrics in a side panel or fullscreen, with the current line filled in as it's sung, plus a cover art view with track details and progress
 - Queue and playlists. Build a queue, save and reorder playlists, or import any YouTube / YouTube Music playlist by URL
 - Listening history: Recently Played and Most Played tabs, with persistent play counts
 - Discovery: `ga` for an artist's songs, `gs` for similar songs, `gb` for the album, and `:album` / `:playlist` to search for albums and playlists
@@ -150,7 +150,7 @@ These are the defaults. You can change them, see [Custom keys](#custom-keys).
 | `gb` | go to the album |
 | `gB` | save the album as a playlist |
 | `L` | toggle the lyrics panel |
-| `F` | fullscreen lyrics |
+| `F` | cycle fullscreen lyrics → cover art and lyrics → player |
 | `/` `:` | search / command line |
 | `?` | help |
 | `q` | quit |
@@ -187,9 +187,17 @@ Press `:` to open the command line. Most commands have short aliases (`:vol`, `:
 
 ## Lyrics
 
-Press `L` for a side panel (needs a terminal at least 70 columns wide) or `F` for fullscreen. The current line is highlighted and fills in as it's sung. Songs without synced lyrics show plain text that you can scroll with `j`/`k`.
+Press `L` for a side panel (needs a terminal at least 70 columns wide). Press `F` to cycle through fullscreen lyrics, cover art and lyrics, and back to the player. `Esc`, `q` or `L` also closes either fullscreen view.
+
+The cover view shows square artwork, the song title, artist and album, and a progress bar with elapsed and remaining time on the left. Lyrics appear on the right, with the current line kept near the middle and surrounding lines fading with distance. This view hides the bottom player bar to give the artwork and lyrics more room.
+
+The current line is highlighted and fills in as it's sung. Songs without synced lyrics show plain text that you can scroll with `j`/`k`.
+
+Both fullscreen views keep playback controls available: `Space` to pause or resume, `h`/`l` or the arrow keys to seek, `n`/`N` to skip tracks, `+`/`-` for volume, `s` for shuffle and `r` to cycle repeat.
 
 Lyrics come from [LRCLIB](https://lrclib.net) and are only fetched while the panel or fullscreen view is open.
+
+Artwork comes from YouTube thumbnails and is only fetched when the cover view is open. Drift trims black bars and crops and resizes the image to 1000 × 1000 pixels. Terminals detected as supporting the Kitty or iTerm2 graphics protocol show the image directly; other terminals use colored half blocks for a rough preview. The cover is hidden in very short windows to leave room for track details.
 
 ## Configuration
 
@@ -301,6 +309,8 @@ In the Playlists tab `seek_forward` opens the selected playlist, and `seek_back`
 **Playback fails with "Sign in to confirm you're not a bot".** YouTube wants a login. Set `cookies_from_browser` under `[audio]` to a browser you're logged into YouTube with (for example `"firefox"`), then restart Drift. Updating yt-dlp also helps, since YouTube changes things often.
 
 **The lyrics panel doesn't show up.** It needs a terminal at least 70 columns wide. Make the window wider or use `F` for fullscreen lyrics.
+
+**Cover art looks blocky or is missing.** Press `F` twice from the player to open the cover view. A blocky preview means Drift couldn't detect Kitty or iTerm2 graphics support in your terminal. If you see "Cover art unavailable", the YouTube thumbnail couldn't be fetched or decoded. In very short windows, make the terminal taller to show the cover.
 
 **`drift: command not found`.** Make sure `~/.cargo/bin` is in your `$PATH`.
 

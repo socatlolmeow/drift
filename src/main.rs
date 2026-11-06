@@ -1,6 +1,7 @@
 mod app;
 mod command;
 mod config;
+mod cover;
 mod discord;
 mod history;
 mod keys;
@@ -134,6 +135,9 @@ fn run(initial_query: Option<String>) -> Result<()> {
     }
 
     let mut terminal = ratatui::try_init()?;
+    if let Ok(picker) = ratatui_image::picker::Picker::from_query_stdio() {
+        app.set_image_picker(picker);
+    }
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         if std::thread::current().name() == Some("main") {

@@ -7,6 +7,16 @@ use ratatui::Frame;
 use crate::app::{App, Level, LyricsState, MenuAction, Mode, PlayState, SearchKind, View, NO_KEY};
 use crate::lyrics::Lyrics;
 use crate::model::{fmt_time, Track};
+use ratatui_image::{Resize, StatefulImage};
+
+/* The three ways lyrics get drawn: the side panel, centered fullscreen, and
+   the left-aligned column next to the cover art. */
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LyricsLayout {
+    Panel,
+    Full,
+    Cover,
+}
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
@@ -35,6 +45,7 @@ fn dim() -> Style {
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
+    let artwork_mode = app.mode == Mode::LyricsArtwork;
     let [top, body, playing] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(3),
@@ -42,15 +53,25 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     ])
     .areas(area);
 
-    if app.mode == Mode::Lyrics {
+    if app.mode.is_lyrics() {
         draw_lyrics_header(f, app, top);
-        draw_lyrics(f, app, body, true);
+        if artwork_mode {
+            let artwork = Rect::new(
+                body.x,
+                body.y,
+                body.width,
+                area.bottom().saturating_sub(body.y),
+            );
+            draw_lyrics_artwork(f, app, artwork);
+        } else {
+            draw_lyrics(f, app, body, LyricsLayout::Full);
+        }
     } else {
         draw_tabs(f, app, top);
         let list = if app.lyrics_panel && body.width >= 70 {
             let [list, side] =
                 Layout::horizontal([Constraint::Min(40), Constraint::Percentage(40)]).areas(body);
-            draw_lyrics(f, app, side, false);
+            draw_lyrics(f, app, side, LyricsLayout::Panel);
             list
         } else if body.width >= 100
             && app.queue_sidebar
@@ -74,7 +95,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             View::MostPlayed => draw_history(f, app, list, true),
         }
     }
-    draw_now_playing(f, app, playing);
+    if !artwork_mode {
+        draw_now_playing(f, app, playing);
+    }
     if app.mode == Mode::Command {
         draw_palette(f, app, area);
     }
@@ -96,7 +119,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     if app.mode == Mode::Info {
         draw_info(f, app, area);
     }
-    draw_toast(f, app, body);
+    if !artwork_mode {
+        draw_toast(f, app, body);
+    }
 }
 
 fn hints(items: &[(&str, &str)], width: u16) -> Option<Line<'static>> {
@@ -785,21 +810,309 @@ fn draw_lyrics_header(f: &mut Frame, app: &App, area: Rect) {
     let unsynced = matches!(&app.lyrics, LyricsState::Ready(l) if !l.synced);
     let mut title = vec![
         Span::styled(" Drift", Style::new().fg(app.accent).bold()),
-        Span::styled("  ·  Lyrics", dim()),
+        Span::styled(
+            if app.mode == Mode::LyricsArtwork {
+                "  ·  Lyrics / cover"
+            } else {
+                "  ·  Lyrics"
+            },
+            dim(),
+        ),
     ];
     if unsynced {
         title.push(Span::styled("  ·  not synced", dim()));
     }
     f.render_widget(Paragraph::new(Line::from(title)), area);
 
-    let mut keys = vec![("space", "pause"), ("h l", "seek"), ("n N", "skip")];
+    let mut keys = vec![
+        ("space", "pause"),
+        ("h l", "seek"),
+        ("n N", "skip"),
+        ("+ -", "volume"),
+        ("s r", "shuffle/repeat"),
+    ];
     if unsynced {
         keys.insert(0, ("j k", "scroll"));
     }
+    keys.push((
+        "F",
+        if app.mode == Mode::LyricsArtwork {
+            "close"
+        } else {
+            "cover view"
+        },
+    ));
     keys.push(("Esc", "close"));
     if let Some(h) = hints(&keys, area.width.saturating_sub(30)) {
         f.render_widget(Paragraph::new(h), area);
     }
+}
+
+fn draw_lyrics_artwork(f: &mut Frame, app: &mut App, area: Rect) {
+    let [track, lyrics] =
+        Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .horizontal_margin(3)
+            .spacing(4)
+            .areas(area);
+    draw_cover_track(f, app, track);
+    draw_lyrics(f, app, lyrics, LyricsLayout::Cover);
+}
+
+/* Average color of one cell in a gw x gh grid laid over the image. */
+fn sample_color(img: &image::RgbImage, gx: u32, gy: u32, gw: u32, gh: u32) -> Color {
+    let (w, h) = img.dimensions();
+    let x0 = (gx * w / gw).min(w - 1);
+    let x1 = ((gx + 1) * w / gw).clamp(x0 + 1, w);
+    let y0 = (gy * h / gh).min(h - 1);
+    let y1 = ((gy + 1) * h / gh).clamp(y0 + 1, h);
+    let (mut r, mut g, mut b, mut n) = (0u32, 0u32, 0u32, 0u32);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let [pr, pg, pb] = img.get_pixel(x, y).0;
+            r += u32::from(pr);
+            g += u32::from(pg);
+            b += u32::from(pb);
+            n += 1;
+        }
+    }
+    let n = n.max(1);
+    Color::Rgb((r / n) as u8, (g / n) as u8, (b / n) as u8)
+}
+
+/* Fallback for terminals with no image protocol. Every cell shows two
+   pixels stacked on top of each other (upper half block: fg is the top
+   one, bg is the bottom one). It's blocky, but you can still tell what the
+   cover is. */
+fn draw_cover_blocks(f: &mut Frame, img: &image::RgbImage, area: Rect) {
+    if area.is_empty() || img.width() == 0 || img.height() == 0 {
+        return;
+    }
+    // cells are about twice as tall as wide, so square = 2 columns per row
+    let cols = area.width.min(area.height.saturating_mul(2));
+    let rows = cols / 2;
+    if rows == 0 {
+        return;
+    }
+    let x0 = area.x + (area.width - cols) / 2;
+    let y0 = area.y + (area.height - rows) / 2;
+    let (gw, gh) = (u32::from(cols), u32::from(rows) * 2);
+    let buf = f.buffer_mut();
+    for cy in 0..rows {
+        for cx in 0..cols {
+            let top = sample_color(img, u32::from(cx), u32::from(cy) * 2, gw, gh);
+            let bottom = sample_color(img, u32::from(cx), u32::from(cy) * 2 + 1, gw, gh);
+            buf[(x0 + cx, y0 + cy)]
+                .set_symbol("▀")
+                .set_fg(top)
+                .set_bg(bottom);
+        }
+    }
+}
+
+/* Cut text down to `max` cells and add an ellipsis if anything got lost. */
+fn truncate_cells(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max.saturating_sub(1)).collect();
+    if max > 0 {
+        out.push('…');
+    }
+    out
+}
+
+/* Thin progress bar with a little knob at the current spot. */
+fn thin_bar(width: usize, ratio: f64, accent: Color) -> Line<'static> {
+    let width = width.max(1);
+    let ratio = if ratio.is_finite() {
+        ratio.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let head = ((ratio * width as f64) as usize).min(width - 1);
+    let spans: Vec<Span<'static>> = (0..width)
+        .map(|i| {
+            if i < head {
+                Span::styled("━", Style::new().fg(accent))
+            } else if i == head {
+                Span::styled("●", Style::new().fg(Color::White).bold())
+            } else {
+                Span::styled("─", dim())
+            }
+        })
+        .collect();
+    Line::from(spans)
+}
+
+/* Draws the cover into `art`. If there's nothing to show yet, prints a short
+   message across the whole `column` instead, so it doesn't wrap in the
+   narrow art box. */
+fn draw_cover_art(f: &mut Frame, app: &mut App, track_id: &str, art: Rect, column: Rect) {
+    // a cover only counts if it belongs to the song playing right now
+    let fresh = app.cover_id.as_deref() == Some(track_id);
+    if let Some(cover) = app.cover.as_mut().filter(|_| fresh) {
+        if art.is_empty() {
+            return;
+        }
+        let fit = cover.size_for(Resize::Fit(None), art);
+        // the fitted image can be smaller than the box, so center it
+        let image_area = Rect::new(
+            art.x + art.width.saturating_sub(fit.width) / 2,
+            art.y + art.height.saturating_sub(fit.height) / 2,
+            fit.width.min(art.width),
+            fit.height.min(art.height),
+        );
+        f.render_stateful_widget(StatefulImage::default(), image_area, cover);
+        return;
+    }
+    if let Some(thumb) = app.cover_thumb.as_ref().filter(|_| fresh) {
+        draw_cover_blocks(f, thumb, art);
+        return;
+    }
+    if art.is_empty() {
+        return;
+    }
+    let message = if app.cover_loading || !fresh {
+        "Loading cover…"
+    } else {
+        "Cover art unavailable"
+    };
+    f.render_widget(
+        Paragraph::new(message)
+            .style(dim())
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true }),
+        Rect::new(column.x, art.y, column.width, art.height),
+    );
+}
+
+/* Title (with the star and menu glyphs on the right) and "artist — album". */
+fn draw_track_text(f: &mut Frame, track: &Track, title_row: Rect, artist_row: Rect) {
+    // skip the glyphs when there's barely any room
+    let side = if title_row.width >= 16 { 6 } else { 0 };
+    let [title_area, side_area] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(side)]).areas(title_row);
+    f.render_widget(
+        Paragraph::new(Line::styled(
+            truncate_cells(&track.title, title_area.width as usize),
+            Style::new().fg(Color::White).bold(),
+        )),
+        title_area,
+    );
+    if side > 0 {
+        f.render_widget(
+            Paragraph::new(Line::styled("☆  ···", Style::new().fg(Color::Gray)))
+                .alignment(Alignment::Right),
+            side_area,
+        );
+    }
+
+    let mut by_line = track.artist_names().join(", ");
+    if let Some(album) = track.album.as_deref().filter(|a| !a.is_empty()) {
+        by_line.push_str(" — ");
+        by_line.push_str(album);
+    }
+    f.render_widget(
+        Paragraph::new(Line::styled(
+            truncate_cells(&by_line, artist_row.width as usize),
+            dim(),
+        )),
+        artist_row,
+    );
+}
+
+/* Progress bar, with elapsed time on the left and time left on the right. */
+fn draw_progress(f: &mut Frame, app: &App, track: &Track, bar_row: Rect, time_row: Rect) {
+    // the player doesn't always know the length yet, fall back to the track's
+    let duration = if app.duration.is_finite() && app.duration > 0.0 {
+        app.duration
+    } else {
+        track.duration.map_or(0.0, f64::from)
+    };
+    let position = app.position.max(0.0);
+    let ratio = if duration > 0.0 {
+        (position / duration).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    f.render_widget(
+        Paragraph::new(thin_bar(bar_row.width as usize, ratio, app.accent)),
+        bar_row,
+    );
+
+    let remaining = if duration > 0.0 {
+        format!("-{}", fmt_time((duration - position).max(0.0)))
+    } else {
+        "--:--".to_string()
+    };
+    let [elapsed_area, _, remaining_area] = Layout::horizontal([
+        Constraint::Length(8),
+        Constraint::Min(0),
+        Constraint::Length(8),
+    ])
+    .areas(time_row);
+    f.render_widget(
+        Paragraph::new(fmt_time(position)).style(dim()),
+        elapsed_area,
+    );
+    f.render_widget(
+        Paragraph::new(remaining)
+            .style(dim())
+            .alignment(Alignment::Right),
+        remaining_area,
+    );
+}
+
+/* Left column of the cover view. Everything is stacked and centered
+   vertically: cover, gap, title, artist, progress bar, times. */
+fn draw_cover_track(f: &mut Frame, app: &mut App, area: Rect) {
+    if area.is_empty() {
+        return;
+    }
+    let Some(track) = app
+        .now_track()
+        .filter(|_| app.play_state != PlayState::Stopped)
+        .cloned()
+    else {
+        f.render_widget(Paragraph::new("Nothing playing").style(dim()), area);
+        return;
+    };
+
+    // gap under the cover + title + artist + progress + times
+    const INFO_ROWS: u16 = 5;
+    // Cells are about twice as tall as wide, so a square cover can't be
+    // taller than width / 2. Take 3/4 of that so it doesn't hog the column,
+    // and drop the cover completely when the terminal is really short.
+    let max_art = area.height.saturating_sub(INFO_ROWS).min(area.width / 2);
+    let art_h = if max_art >= 4 { max_art * 3 / 4 } else { 0 };
+    let used = if art_h > 0 { art_h + INFO_ROWS } else { INFO_ROWS - 1 };
+    let total = used.min(area.height);
+    // the text below lines up with the cover's edges
+    let stack_w = if art_h > 0 {
+        (art_h * 2).min(area.width)
+    } else {
+        area.width
+    };
+    let stack = Rect::new(
+        area.x + (area.width - stack_w) / 2,
+        area.y + (area.height - total) / 2,
+        stack_w,
+        total,
+    );
+    let gap = u16::from(art_h > 0);
+    let [art, _, title_row, artist_row, bar_row, time_row] = Layout::vertical([
+        Constraint::Length(art_h),
+        Constraint::Length(gap),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(stack);
+
+    draw_cover_art(f, app, &track.id, art, area);
+    draw_track_text(f, &track, title_row, artist_row);
+    draw_progress(f, app, &track, bar_row, time_row);
 }
 
 fn lyric_rows(
@@ -807,6 +1120,7 @@ fn lyric_rows(
     position: f64,
     width: usize,
     roomy: bool,
+    fade: bool,
     accent: Color,
 ) -> (Vec<Line<'static>>, Option<usize>) {
     let active = lyrics.active(position);
@@ -841,15 +1155,21 @@ fn lyric_rows(
             }
         } else {
             let ahead = active.map_or(i as isize + 1, |a| i as isize - a as isize);
-            let color = match (lyrics.synced, ahead) {
-                (false, _) | (_, 1..=2) => Color::Gray,
-                _ => Color::DarkGray,
+            let style = if fade && lyrics.synced && active.is_some() {
+                // closest lines stay readable, the rest fade out with distance
+                match ahead.unsigned_abs() {
+                    0..=1 => Style::new().fg(Color::Gray),
+                    2 => Style::new().fg(Color::DarkGray),
+                    _ => Style::new().fg(Color::DarkGray).add_modifier(Modifier::DIM),
+                }
+            } else {
+                let color = match (lyrics.synced, ahead) {
+                    (false, _) | (_, 1..=2) => Color::Gray,
+                    _ => Color::DarkGray,
+                };
+                Style::new().fg(color)
             };
-            rows.extend(
-                parts
-                    .into_iter()
-                    .map(|p| Line::styled(p, Style::new().fg(color))),
-            );
+            rows.extend(parts.into_iter().map(|p| Line::styled(p, style)));
         }
         if roomy {
             rows.push(Line::raw(""));
@@ -858,8 +1178,11 @@ fn lyric_rows(
     (rows, focus)
 }
 
-fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, full: bool) {
-    let inner = if full {
+fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, layout: LyricsLayout) {
+    let full = layout != LyricsLayout::Panel;
+    let inner = if layout == LyricsLayout::Cover {
+        area
+    } else if full {
         let w = area.width.saturating_sub(4).min(76);
         Rect {
             x: area.x + (area.width - w) / 2,
@@ -920,7 +1243,14 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, full: bool) {
     let LyricsState::Ready(lyrics) = &app.lyrics else {
         return;
     };
-    let (rows, focus) = lyric_rows(lyrics, app.position, inner.width as usize, full, app.accent);
+    let (rows, focus) = lyric_rows(
+        lyrics,
+        app.position,
+        inner.width as usize,
+        full,
+        layout == LyricsLayout::Cover,
+        app.accent,
+    );
     let height = inner.height as usize;
     let max_start = rows.len().saturating_sub(height);
     let start = if lyrics.synced {
@@ -931,7 +1261,7 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, full: bool) {
     .min(max_start);
     app.lyrics_scroll = start;
     let visible: Vec<Line> = rows.into_iter().skip(start).take(height).collect();
-    let align = if full {
+    let align = if layout == LyricsLayout::Full {
         Alignment::Center
     } else {
         Alignment::Left
@@ -1403,7 +1733,10 @@ const HELP: &[(&str, &str)] = &[
     ("h l  / ← →", "seek -5s / +5s (counts: 6l)"),
     ("+  -", "volume up / down"),
     ("s  r", "toggle shuffle / cycle repeat"),
-    ("L  F", "lyrics side panel / fullscreen lyrics (Esc closes)"),
+    (
+        "L  F",
+        "lyrics panel / cycle fullscreen lyrics + cover (Esc closes)",
+    ),
     (
         "ga  or  :artist",
         "songs by the artist of the selected song; a popup asks which one when there are several",
@@ -1685,6 +2018,128 @@ mod tests {
             .collect()
     }
 
+    fn check_artwork_layout(app: &mut App) {
+        app.status = None;
+        app.queue = vec![Track {
+            id: "aaaaaaaaaaa".into(),
+            title: "Cover Song".into(),
+            artist: "First Artist & Second Artist".into(),
+            artists: vec!["First Artist".into(), "Second Artist".into()],
+            album: None,
+            duration: Some(90),
+        }];
+        app.current = Some(0);
+        app.play_state = PlayState::Playing;
+        app.position = 27.0;
+        app.duration = 90.0;
+        app.lyrics_id = Some("aaaaaaaaaaa".into());
+        app.lyrics = LyricsState::Ready(Lyrics {
+            lines: crate::lyrics::parse_lrc("[00:00.00]First lyric\n[00:10.00]Second lyric"),
+            synced: true,
+        });
+        app.cover_id = Some("aaaaaaaaaaa".into());
+        let press = |app: &mut App, key| app.on_key(KeyEvent::new(key, KeyModifiers::NONE));
+        press(app, KeyCode::Char('F'));
+        assert!(app.mode == Mode::Lyrics);
+        press(app, KeyCode::Char('F'));
+        assert!(app.mode == Mode::LyricsArtwork);
+
+        let mut term = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        term.draw(|f| draw(f, app)).unwrap();
+        assert!(text(&term).contains("Cover art unavailable"));
+        assert!(!text(&term).contains("Now Playing"));
+
+        // Without an image protocol the cover is drawn with half blocks.
+        app.cover_thumb = Some(image::RgbImage::from_pixel(8, 8, image::Rgb([255, 0, 0])));
+        term.draw(|f| draw(f, app)).unwrap();
+        assert!(text(&term).contains('▀'));
+        assert!(!text(&term).contains("Cover art unavailable"));
+        app.cover_thumb = None;
+
+        let mut picker = ratatui_image::picker::Picker::from_fontsize((10, 20));
+        picker.set_protocol_type(ratatui_image::picker::ProtocolType::Kitty);
+        app.set_image_picker(picker);
+        app.on_event(crate::app::AppEvent::Cover {
+            id: "aaaaaaaaaaa".into(),
+            image: Some(image::RgbImage::from_pixel(16, 16, image::Rgb([255, 0, 0]))),
+        });
+        assert!(matches!(
+            app.cover.as_ref().unwrap().protocol_type(),
+            ratatui_image::protocol::StatefulProtocolType::Kitty(_)
+        ));
+        term.draw(|f| draw(f, app)).unwrap();
+        assert!(text(&term).contains("\x1b_G"));
+        let buffer = term.backend().buffer();
+        let find = |needle: &str| {
+            (1..32)
+                .find_map(|y| {
+                    let row: String = (0..120).map(|x| buffer[(x, y)].symbol()).collect();
+                    row.find(needle).map(|x| (x, y))
+                })
+                .unwrap_or_else(|| panic!("{needle:?} not found in: {}", text(&term)))
+        };
+        let (title_x, title_y) = find("Cover Song");
+        let (artist_x, artist_y) = find("First Artist, Second Artist");
+        let (lyric_x, _) = find("First lyric");
+        let (time_x, time_y) = find("0:27");
+        assert!(title_x < lyric_x && artist_x < lyric_x && artist_y > title_y);
+        assert!(time_x < lyric_x && time_y > artist_y);
+        assert!(text(&term).contains("0:27") && text(&term).contains("-1:03"));
+        assert!(text(&term).contains("☆"));
+        assert!(!text(&term).contains("Now Playing"));
+        assert!(!text(&term).contains("🔈") && !text(&term).contains("⏸"));
+
+        // Stale artwork is hidden immediately when playback changes tracks.
+        app.cover_id = Some("bbbbbbbbbbb".into());
+        term.draw(|f| draw(f, app)).unwrap();
+        assert!(text(&term).contains("Loading cover"));
+        app.cover_id = app.lyrics_id.clone();
+        app.cover = None;
+        term.draw(|f| draw(f, app)).unwrap();
+        assert!(text(&term).contains("Cover art unavailable"));
+
+        app.lyrics = LyricsState::Ready(Lyrics {
+            lines: (0..30)
+                .map(|i| crate::lyrics::Line {
+                    at: 0.0,
+                    text: format!("Verse {i}"),
+                })
+                .collect(),
+            synced: false,
+        });
+        press(app, KeyCode::Char('j'));
+        term.draw(|f| draw(f, app)).unwrap();
+        assert_eq!(app.lyrics_scroll, 1);
+        for (width, height) in [(80, 24), (50, 20)] {
+            let mut small = Terminal::new(TestBackend::new(width, height)).unwrap();
+            small.draw(|f| draw(f, app)).unwrap();
+        }
+
+        press(app, KeyCode::Char('F'));
+        assert!(app.mode == Mode::Normal);
+        press(app, KeyCode::Char('F'));
+        press(app, KeyCode::Esc);
+        assert!(app.mode == Mode::Normal);
+
+        app.lyrics = LyricsState::Ready(Lyrics {
+            lines: vec![crate::lyrics::Line {
+                at: 0.0,
+                text: "Original layout".into(),
+            }],
+            synced: false,
+        });
+        press(app, KeyCode::Char('F'));
+        let mut original = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        original.draw(|f| draw(f, app)).unwrap();
+        let row = (0..120)
+            .map(|x| original.backend().buffer()[(x, 1)].symbol())
+            .collect::<String>();
+        assert!((52..=53).contains(&row.find("Original layout").unwrap()));
+        press(app, KeyCode::Char('F'));
+        press(app, KeyCode::Esc);
+        assert!(app.mode == Mode::Normal);
+    }
+
     #[test]
     fn open_playlist_renders() {
         let dir = std::env::temp_dir().join(format!("drift-ui-test-{}", std::process::id()));
@@ -1771,6 +2226,8 @@ mod tests {
         let mut narrow = Terminal::new(TestBackend::new(12, 5)).unwrap();
         narrow.draw(|f| draw(f, &mut app)).unwrap();
         key(&mut app, KeyCode::Char('q'));
+
+        check_artwork_layout(&mut app);
 
         let _ = std::fs::remove_dir_all(&dir);
     }
