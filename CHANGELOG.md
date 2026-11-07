@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+Changes to drift. Loosely follows [Keep A Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 
@@ -21,3 +21,7 @@
 - Playlist pagination support
   - Browse collections beyond 50-item limit (tested up to 400+ tracks)
   - Proper continuation token handling and repetition detection
+ 
+# New Contributors
+- [@pnlt](https://github.com/pnlt) in [#6](https://github.com/socatlolmeow/drift/pull/6).
+ 
