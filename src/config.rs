@@ -90,6 +90,7 @@ pub struct Discord {
 pub struct Audio {
     pub download: bool,
     pub download_max_minutes: u32,
+    pub download_dir: String,
     pub cookies_from_browser: String,
 }
 
@@ -98,12 +99,38 @@ impl Default for Audio {
         Audio {
             download: false,
             download_max_minutes: 15,
+            download_dir: "~/Music/drift".into(),
             cookies_from_browser: String::new(),
         }
     }
 }
 
 impl Audio {
+    pub fn download_directory(&self) -> Result<PathBuf, String> {
+        let dir = self.download_dir.as_str();
+        if dir.trim().is_empty() {
+            return Err("audio.download_dir must not be empty".into());
+        }
+        let path = if dir == "~" {
+            dirs::home_dir().ok_or("cannot determine home directory")?
+        } else if let Some(rest) = dir.strip_prefix("~/") {
+            dirs::home_dir()
+                .ok_or("cannot determine home directory")?
+                .join(rest.trim_start_matches('/'))
+        } else if dir.starts_with('~') {
+            return Err("audio.download_dir supports only ~ or ~/ for home expansion".into());
+        } else {
+            PathBuf::from(dir)
+        };
+        if path.is_absolute() {
+            Ok(path)
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .map_err(|e| format!("cannot resolve audio.download_dir: {e}"))
+        }
+    }
+
     /// Browser name for yt-dlp's --cookies-from-browser, if one is set.
     pub fn cookies(&self) -> Option<&str> {
         let c = self.cookies_from_browser.trim();
@@ -221,6 +248,7 @@ download = {download}
 # With download = true, songs longer than this many minutes are still streamed
 # instead of downloaded. 0 means download everything, however long.
 download_max_minutes = {dl_max}
+download_dir = {download_dir}
 # Use your browser's cookies with yt-dlp when YouTube refuses to play something
 # (\"Sign in to confirm you're not a bot\", age-restricted songs, ...).
 # Examples: \"firefox\", \"chrome\", \"chromium\", \"brave\", \"edge\",
@@ -251,6 +279,7 @@ cookies_from_browser = \"{cookies}\"
             client_id = d.client_id,
             download = au.download,
             dl_max = au.download_max_minutes,
+            download_dir = toml::Value::String(au.download_dir.clone()),
             cookies = au.cookies_from_browser.replace(['\\', '"'], ""),
         )
     }
@@ -494,11 +523,63 @@ mod tests {
     }
 
     #[test]
+    fn download_directory_paths() {
+        let mut audio = Audio::default();
+        assert_eq!(audio.download_dir, "~/Music/drift");
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(audio.download_directory().unwrap(), home.join("Music/drift"));
+        audio.download_dir = "~".into();
+        assert_eq!(audio.download_directory().unwrap(), home);
+        audio.download_dir = "~//Music/drift".into();
+        assert_eq!(audio.download_directory().unwrap(), home.join("Music/drift"));
+        audio.download_dir = "music/downloads".into();
+        assert_eq!(
+            audio.download_directory().unwrap(),
+            std::env::current_dir().unwrap().join("music/downloads")
+        );
+        let absolute = std::env::temp_dir().join("drift music");
+        audio.download_dir = absolute.to_str().unwrap().into();
+        assert_eq!(audio.download_directory().unwrap(), absolute);
+        for invalid in ["", " \t\n", "~user", "~user/music"] {
+            audio.download_dir = invalid.into();
+            assert!(audio.download_directory().is_err(), "{invalid:?}");
+        }
+        let c: Config = toml::from_str("[audio]\ndownload = true").unwrap();
+        assert_eq!(c.audio.download_dir, "~/Music/drift");
+    }
+
+    #[test]
+    fn download_directory_roundtrip() {
+        for dir in [
+            "~/Music/drift",
+            "relative music/日本語",
+            "C:\\Users\\Music\\drift",
+            "music/\"quoted\"/back\\slash\twith\nnewline\rand\0null",
+            "'''triple single quotes''' and \"\"\"double quotes\"\"\"",
+        ] {
+            let audio = Audio {
+                download_dir: dir.into(),
+                ..Audio::default()
+            };
+            let text = Config::render(
+                &Playback::default(),
+                &Artist::default(),
+                &Ui::default(),
+                &Discord::default(),
+                &audio,
+            );
+            let c: Config = toml::from_str(&text).unwrap();
+            assert_eq!(c.audio.download_dir, dir);
+        }
+    }
+
+    #[test]
     fn audio_roundtrip() {
         let a = Audio {
             download: true,
             download_max_minutes: 30,
             cookies_from_browser: "chrome".into(),
+            ..Audio::default()
         };
         let text = Config::render(
             &Playback::default(),

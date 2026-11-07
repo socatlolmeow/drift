@@ -76,29 +76,10 @@ pub fn browse_tracks(browse_id: &str, album: &str, artist: &str) -> Result<Vec<T
     let playlist = browse_id.starts_with("VL");
     let v =
         post(BROWSE_ENDPOINT, json!({ "browseId": browse_id })).map_err(|e| format!("{e:#}"))?;
-    let mut tracks = parse_browse(&v, playlist);
-    let mut next = if playlist {
-        find_continuation(&v)
-    } else {
-        None
-    };
-    let mut pages = 0;
-    while let Some(tok) = next.take() {
-        if pages >= 5 || tracks.len() >= 300 {
-            break;
-        }
-        pages += 1;
-        let url = format!("{BROWSE_ENDPOINT}&ctoken={tok}&continuation={tok}");
-        let Ok(v) = post(&url, json!({})) else { break };
-        let more = parse_browse(&v, true);
-        if more.is_empty() {
-            break;
-        }
-        let mut known: std::collections::HashSet<String> =
-            tracks.iter().map(|t| t.id.clone()).collect();
-        tracks.extend(more.into_iter().filter(|t| known.insert(t.id.clone())));
-        next = find_continuation(&v);
-    }
+    let mut tracks = browse_pages(v, playlist, |token| {
+        let url = format!("{BROWSE_ENDPOINT}&ctoken={token}&continuation={token}");
+        post(&url, json!({})).map_err(|e| format!("{e:#}"))
+    })?;
     if tracks.is_empty() {
         return Err("nothing playable found".into());
     }
@@ -111,6 +92,27 @@ pub fn browse_tracks(browse_id: &str, album: &str, artist: &str) -> Result<Vec<T
                 t.artist = artist.to_string();
             }
         }
+    }
+    Ok(tracks)
+}
+
+fn browse_pages(
+    first: Value,
+    playlist: bool,
+    mut fetch: impl FnMut(&str) -> Result<Value, String>,
+) -> Result<Vec<Track>, String> {
+    let mut tracks = parse_browse(&first, playlist);
+    let mut next = if playlist { find_continuation(&first) } else { None };
+    let mut seen = std::collections::HashSet::new();
+    let mut known: std::collections::HashSet<String> =
+        tracks.iter().map(|track| track.id.clone()).collect();
+    while let Some(token) = next.take() {
+        if !seen.insert(token.clone()) {
+            return Err("YouTube Music repeated a playlist page; could not load all songs".into());
+        }
+        let page = fetch(&token).map_err(|error| format!("Could not load all songs: {error}"))?;
+        tracks.extend(parse_browse(&page, playlist).into_iter().filter(|track| known.insert(track.id.clone())));
+        next = find_continuation(&page);
     }
     Ok(tracks)
 }
@@ -840,6 +842,53 @@ not json
         assert_eq!(t.len(), 1);
         assert_eq!(t[0].duration, Some(320));
         assert_eq!(t[0].artist, "Unknown artist");
+    }
+
+    fn playlist_page(start: usize, count: usize, next: Option<&str>) -> Value {
+        let items: Vec<_> = (start..start + count)
+            .map(|id| json!({"musicResponsiveListItemRenderer": {
+                "playlistItemData": {"videoId": format!("{id:011}")},
+                "flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": run("Song")}]
+            }}))
+            .collect();
+        let mut page = json!({"contents": items});
+        if let Some(next) = next {
+            page["continuationCommand"] = json!({"token": next});
+        }
+        page
+    }
+
+    #[test]
+    fn browses_entire_playlist_beyond_old_limits() {
+        let first = playlist_page(0, 50, Some("1"));
+        let tracks = browse_pages(first, true, |token| {
+            let page = token.parse::<usize>().unwrap();
+            let next = (page < 7).then(|| (page + 1).to_string());
+            Ok(playlist_page(page * 50, 50, next.as_deref()))
+        }).unwrap();
+        assert_eq!(tracks.len(), 400);
+        assert_eq!(tracks.last().unwrap().id, "00000000399");
+    }
+
+    #[test]
+    fn playlist_page_errors_are_not_silent_partial_successes() {
+        let first = playlist_page(0, 1, Some("next"));
+        let result = browse_pages(first.clone(), true, |_| Err("offline".into()));
+        assert!(result.unwrap_err().contains("offline"));
+        let result = browse_pages(first, true, |_| Ok(playlist_page(1, 1, Some("next"))));
+        assert!(result.unwrap_err().contains("repeated"));
+    }
+
+    #[test]
+    fn empty_playlist_pages_can_have_more_songs() {
+        let tracks = browse_pages(playlist_page(0, 1, Some("empty")), true, |token| {
+            Ok(match token {
+                "empty" => playlist_page(1, 0, Some("last")),
+                "last" => playlist_page(1, 1, None),
+                _ => panic!("unexpected page"),
+            })
+        }).unwrap();
+        assert_eq!(tracks.len(), 2);
     }
 
     #[test]

@@ -149,6 +149,9 @@ These are the defaults. You can change them, see [Custom keys](#custom-keys).
 | `gs` | see similar songs |
 | `gb` | go to the album |
 | `gB` | save the album as a playlist |
+| `D` | download the current song |
+| `gd` | download the highlighted song |
+| `gD` | download the whole album, playlist, queue or loaded results |
 | `L` | toggle the lyrics panel |
 | `F` | cycle fullscreen lyrics → cover art and lyrics → player |
 | `/` `:` | search / command line |
@@ -169,6 +172,7 @@ Press `:` to open the command line. Most commands have short aliases (`:vol`, `:
 | `:vol 50` `+5` | set or change the volume |
 | `:shuffle` `:repeat [off\|all\|one]` | playback modes |
 | `:add [N]` `:addall` `:playall` | queue results |
+| `:download [current\|selected\|all]` | download audio files (defaults to the current song; alias `:dl`) |
 | `:remove [N]` `:clear` | remove from the queue / clear it |
 | `:save name` `:load name` `:append name` | work with playlists |
 | `:save! name` | save and overwrite an existing playlist |
@@ -191,7 +195,7 @@ Press `L` for a side panel (needs a terminal at least 70 columns wide). Press `F
 
 The cover view shows square artwork, the song title, artist and album, and a progress bar with elapsed and remaining time on the left. Lyrics appear on the right, with the current line kept near the middle and surrounding lines fading with distance. This view hides the bottom player bar to give the artwork and lyrics more room.
 
-The current line is highlighted and fills in as it's sung. Songs without synced lyrics show plain text that you can scroll with `j`/`k`.
+In both fullscreen views the current line gets bold, white text on a dark neutral band with extra breathing room, while nearby lines fade with distance. It fills in as it's sung. Songs without synced lyrics show plain text that you can scroll with `j`/`k`.
 
 Both fullscreen views keep playback controls available: `Space` to pause or resume, `h`/`l` or the arrow keys to seek, `n`/`N` to skip tracks, `+`/`-` for volume, `s` for shuffle and `r` to cycle repeat.
 
@@ -225,6 +229,7 @@ client_id = ""        # set this to enable Discord rich presence
 [audio]
 download = false              # false: stream songs; true: download to the cache first
 download_max_minutes = 15     # with download = true, longer songs are still streamed (0 = no limit)
+download_dir = "~/Music/drift"
 cookies_from_browser = ""     # e.g. "firefox" or "chrome"; passed to yt-dlp when YouTube blocks playback
 
 [keys]
@@ -240,6 +245,21 @@ If you already have a `config.toml` from an older version, add the `[audio]` sec
 ### Streaming or downloading
 
 By default Drift streams songs, so playback starts right away, even for hour-long tracks. With `download = true` songs are cached on disk first, and the next song in the queue is fetched in the background while the current one plays.
+
+### Saving songs permanently
+
+Set `download_dir` under `[audio]` in `config.toml` (default: `~/Music/drift`). The directory is created when needed. `~` expands to your home directory; relative paths resolve from the directory where you start Drift. Restart Drift after changing it.
+
+- Press `D` to download the current song, including from fullscreen lyrics or cover art.
+- Press `gd` to download the highlighted song without changing playback.
+- Press `gD` to download all songs in the open album, playlist or queue. On the playlist list, it downloads the highlighted playlist. For search results and history, it downloads all currently loaded songs.
+- In an album/playlist search picker, press `d` to download the entire collection. To download one song instead, press `Enter`, highlight the song, then press `gd`.
+- The `G` context menu also offers `d` for one song and `D` for the whole list.
+- Commands: `:download` (current song), `:download selected`, and `:download all`. `:dl` is an alias.
+
+Downloads run in the background, one batch at a time, with progress and a completion summary. Duplicate songs within a batch are downloaded once, existing files are kept, and a failed song does not stop the rest. Keep Drift open until the batch finishes.
+
+Files use the best available audio-only format in its original container, such as `.webm` or `.m4a`; no MP3 conversion or ffmpeg is required. Permanent downloads are separate from the playback cache: they work regardless of `audio.download` or `download_max_minutes`, use `cookies_from_browser` when configured, and are never automatically pruned.
 
 ### Discord rich presence
 
@@ -286,6 +306,7 @@ A key is a character (`"x"`, `"G"`, `"/"`), a name (`space`, `enter`, `esc`, `ta
 | `shuffle` `repeat` | `s` / `r` |
 | `menu` | `G` `menu` |
 | `go_artist` `go_similar` `go_album` `save_album` | `ga` / `gs` / `gb` / `gB` |
+| `download` `download_selected` `download_all` | `D` / `gd` / `gD` |
 | `lyrics_panel` `lyrics` | `L` / `F` |
 | `search` `command` | `/` / `:` |
 | `help` | `?` |

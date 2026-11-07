@@ -22,6 +22,7 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 /* Cursor row: accent-colored bold text plus a bar, no filled background. */
 const CURSOR: &str = "▎";
+const LYRIC_HIGHLIGHT_BG: Color = Color::Rgb(30, 30, 30);
 
 fn selected_style(accent: Color) -> Style {
     Style::new().fg(accent).add_modifier(Modifier::BOLD)
@@ -144,11 +145,15 @@ fn hints(items: &[(&str, &str)], width: u16) -> Option<Line<'static>> {
 }
 
 fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
+    let activity = match (&app.busy, &app.download_status) {
+        (Some(busy), Some(download)) => Some(format!("{busy} · {download}")),
+        (busy, download) => busy.as_ref().or(download.as_ref()).cloned(),
+    };
     let [name, tabs, right] = Layout::horizontal([
         Constraint::Length(10),
         Constraint::Min(10),
         Constraint::Length(
-            app.busy
+            activity
                 .as_ref()
                 .map_or(0, |b| b.chars().count() as u16 + 5),
         ),
@@ -186,7 +191,7 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
     }
     f.render_widget(Paragraph::new(Line::from(spans)), tabs);
 
-    if let Some(busy) = &app.busy {
+    if let Some(busy) = &activity {
         let spin = SPINNER[app.tick % SPINNER.len()];
         f.render_widget(
             Paragraph::new(format!("{spin} {busy}… "))
@@ -1115,6 +1120,11 @@ fn draw_cover_track(f: &mut Frame, app: &mut App, area: Rect) {
     draw_progress(f, app, &track, bar_row, time_row);
 }
 
+fn spotlight_style(color: Color, bg: Option<Color>) -> Style {
+    let style = Style::new().fg(color).bold();
+    bg.map_or(style, |bg| style.bg(bg))
+}
+
 fn lyric_rows(
     lyrics: &Lyrics,
     position: f64,
@@ -1127,17 +1137,40 @@ fn lyric_rows(
     let mut rows: Vec<Line<'static>> = Vec::new();
     let mut focus = None;
     for (i, line) in lyrics.lines.iter().enumerate() {
-        let parts = wrap_words(&line.text, width);
         let is_active = active == Some(i);
+        let bg = (is_active && roomy).then_some(LYRIC_HIGHLIGHT_BG);
+        let wrap_width = if bg.is_some() {
+            width.saturating_sub(4).max(1)
+        } else {
+            width
+        };
+        let parts = wrap_words(&line.text, wrap_width);
         if is_active {
+            if roomy {
+                rows.push(Line::raw(""));
+            }
             focus = Some(rows.len() + parts.len().max(1) / 2);
         }
         if parts.is_empty() {
-            rows.push(if is_active {
-                Line::styled("♪", Style::new().fg(accent).bold())
+            if is_active {
+                let mut spans = Vec::new();
+                if let Some(bg) = bg {
+                    spans.push(Span::styled("  ", Style::new().bg(bg)));
+                }
+                spans.push(Span::styled("♪", spotlight_style(accent, bg)));
+                if let Some(bg) = bg {
+                    spans.push(Span::styled("  ", Style::new().bg(bg)));
+                }
+                rows.push(Line::from(spans));
             } else {
-                Line::raw("")
-            });
+                rows.push(Line::raw(""));
+            }
+            if roomy {
+                rows.push(Line::raw(""));
+                if is_active {
+                    rows.push(Line::raw(""));
+                }
+            }
             continue;
         }
         if is_active {
@@ -1148,10 +1181,16 @@ fn lyric_rows(
                 fill -= done;
                 let sung: String = part.chars().take(done).collect();
                 let rest: String = part.chars().skip(done).collect();
-                rows.push(Line::from(vec![
-                    Span::styled(sung, Style::new().fg(accent).bold()),
-                    Span::styled(rest, Style::new().fg(Color::White).bold()),
-                ]));
+                let mut spans = Vec::new();
+                if let Some(bg) = bg {
+                    spans.push(Span::styled("  ", Style::new().bg(bg)));
+                }
+                spans.push(Span::styled(sung, spotlight_style(accent, bg)));
+                spans.push(Span::styled(rest, spotlight_style(Color::White, bg)));
+                if let Some(bg) = bg {
+                    spans.push(Span::styled("  ", Style::new().bg(bg)));
+                }
+                rows.push(Line::from(spans));
             }
         } else {
             let ahead = active.map_or(i as isize + 1, |a| i as isize - a as isize);
@@ -1173,6 +1212,9 @@ fn lyric_rows(
         }
         if roomy {
             rows.push(Line::raw(""));
+            if is_active {
+                rows.push(Line::raw(""));
+            }
         }
     }
     (rows, focus)
@@ -1393,6 +1435,7 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("add", "queue the selected result  ·  add N"),
     ("addall", "queue all results"),
     ("playall", "play all results"),
+    ("download", "save audio files  ·  download [current|selected|all]"),
     ("remove", "remove from the queue  ·  remove N"),
     ("clear", "empty the queue"),
     ("results", "show the Results tab"),
@@ -1753,6 +1796,12 @@ const HELP: &[(&str, &str)] = &[
         "gs  or  :similar",
         "radio: load songs similar to the selected one and start playing them",
     ),
+    ("DOWNLOADS", "#"),
+    ("D", "download the current song to audio.download_dir"),
+    ("gd", "download the highlighted song"),
+    ("gD", "download the album, playlist, queue or all loaded results"),
+    (":download [target]", "target: current (default), selected or all; alias :dl"),
+    ("d in album picker", "download the whole album or playlist; Enter opens it to choose one song"),
     ("SONG MENU  ( G )", "#"),
     ("G", "menu for the highlighted song or playlist"),
     ("j k  ⏎", "move / choose (the yellow letter is a shortcut)"),
@@ -1952,7 +2001,7 @@ fn draw_collection_picker(f: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
     lines.push(Line::styled(
-        " Enter select · s save playlist · j k move · Esc cancel",
+        " Enter open · d download all · s save playlist · j k move · Esc cancel",
         dim(),
     ));
     f.render_widget(Clear, popup);
@@ -2016,6 +2065,32 @@ mod tests {
             .iter()
             .map(|c| c.symbol())
             .collect()
+    }
+
+    #[test]
+    fn active_lyric_gets_fullscreen_spotlight() {
+        let lyrics = Lyrics {
+            lines: crate::lyrics::parse_lrc(
+                "[00:00.00]first line\n[00:10.00]current line\n[00:20.00]third line",
+            ),
+            synced: true,
+        };
+        let (rows, focus) = lyric_rows(&lyrics, 11.0, 40, true, true, Color::Cyan);
+        let focus = focus.unwrap();
+        let active = &rows[focus];
+        let active_text: String = active.spans.iter().map(|span| span.content.as_ref()).collect();
+        assert!(active_text.contains("current"));
+        assert_eq!(active.spans[0].style.bg, Some(LYRIC_HIGHLIGHT_BG));
+        assert_eq!(rows[focus - 1].width(), 0);
+        assert_eq!(rows[focus + 1].width(), 0);
+        assert_eq!(rows[focus + 2].width(), 0);
+        assert!(active.width() <= 40);
+
+        let (panel, focus) = lyric_rows(&lyrics, 11.0, 40, false, false, Color::Cyan);
+        assert!(panel[focus.unwrap()]
+            .spans
+            .iter()
+            .all(|span| span.style.bg.is_none()));
     }
 
     fn check_artwork_layout(app: &mut App) {

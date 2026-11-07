@@ -3,6 +3,7 @@ mod command;
 mod config;
 mod cover;
 mod discord;
+mod download;
 mod history;
 mod keys;
 mod lyrics;

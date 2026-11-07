@@ -325,6 +325,96 @@ fn ytdlp(audio: &Audio) -> Command {
     cmd
 }
 
+fn download_component(text: &str) -> String {
+    let mut name = String::new();
+    for c in text.chars() {
+        let c = if c.is_control() || "/\\:*?\"<>|%~$".contains(c) {
+            '_'
+        } else {
+            c
+        };
+        if name.len() + c.len_utf8() > 80 {
+            break;
+        }
+        name.push(c);
+    }
+    let name = name.trim_matches(|c: char| c == '.' || c.is_whitespace());
+    if name.is_empty() {
+        "Unknown".into()
+    } else {
+        name.into()
+    }
+}
+
+fn download_command(
+    track: &crate::model::Track,
+    audio: &Audio,
+    dir: &std::path::Path,
+) -> Result<Command, String> {
+    if track.id.len() != 11
+        || !track
+            .id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err("invalid YouTube track ID".into());
+    }
+    let filename = format!(
+        "{} - {} [{}].%(ext)s",
+        download_component(&track.artist),
+        download_component(&track.title),
+        track.id,
+    );
+    let mut cmd = ytdlp(audio);
+    cmd.args([
+        "--ignore-config",
+        "-f",
+        "bestaudio",
+        "--no-playlist",
+        "--no-overwrites",
+        "--no-progress",
+        "--no-warnings",
+    ])
+    .arg("--paths")
+    .arg(dir)
+    .arg(format!("--output={filename}"))
+    .arg("--")
+    .arg(track.url())
+    .stdin(Stdio::null())
+    .stdout(Stdio::null());
+    crate::sys::no_window(&mut cmd);
+    Ok(cmd)
+}
+
+pub fn download_track(
+    track: &crate::model::Track,
+    audio: &Audio,
+    dir: &std::path::Path,
+) -> Result<(), String> {
+    let mut cmd = download_command(track, audio, dir)?;
+    std::fs::create_dir_all(dir)
+        .map_err(|e| format!("can't create {}: {e}", dir.display()))?;
+    let out = cmd
+        .output()
+        .map_err(|e| format!("could not run yt-dlp ({e}); is it installed and on PATH?"))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let reason = stderr
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix("ERROR: "))
+        .map(ytdl_reason)
+        .filter(|reason| !reason.is_empty())
+        .unwrap_or_else(|| stderr.trim().to_string());
+    if reason.is_empty() {
+        Err(format!("yt-dlp failed ({})", out.status))
+    } else {
+        Err(format!("yt-dlp failed ({}): {reason}", out.status))
+    }
+}
+
 fn audio_dir() -> PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(std::env::temp_dir)
@@ -487,6 +577,99 @@ fn parse_event(v: &Value) -> Option<PlayerEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn download_test_track() -> crate::model::Track {
+        crate::model::Track {
+            id: "dQw4w9WgXcQ".into(),
+            title: "Song".into(),
+            artist: "Artist".into(),
+            artists: Vec::new(),
+            album: None,
+            duration: None,
+        }
+    }
+
+    #[test]
+    fn persistent_download_arguments() {
+        let audio = Audio {
+            cookies_from_browser: " firefox:profile ".into(),
+            ..Audio::default()
+        };
+        let dir = std::env::temp_dir().join("drift downloads");
+        let cmd = download_command(&download_test_track(), &audio, &dir).unwrap();
+        assert_eq!(cmd.get_program(), "yt-dlp");
+        let args: Vec<_> = cmd.get_args().map(|arg| arg.to_string_lossy()).collect();
+        assert_eq!(
+            args,
+            vec![
+                "--cookies-from-browser",
+                "firefox:profile",
+                "--ignore-config",
+                "-f",
+                "bestaudio",
+                "--no-playlist",
+                "--no-overwrites",
+                "--no-progress",
+                "--no-warnings",
+                "--paths",
+                dir.to_str().unwrap(),
+                "--output=Artist - Song [dQw4w9WgXcQ].%(ext)s",
+                "--",
+                "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            ]
+        );
+    }
+
+    #[test]
+    fn persistent_download_sanitizes_names_and_preserves_ids() {
+        let mut track = download_test_track();
+        track.artist = "../../%(title)s\\Artist".into();
+        track.title = " /evil:\"*?<>|\n\0%(id)s ".into();
+        let output = |track: &crate::model::Track| {
+            download_command(track, &Audio::default(), std::path::Path::new("music"))
+                .unwrap()
+                .get_args()
+                .find_map(|arg| arg.to_str()?.strip_prefix("--output=").map(str::to_owned))
+                .unwrap()
+        };
+        let first = output(&track);
+        assert_eq!(first.matches('%').count(), 1);
+        assert!(first.ends_with(" [dQw4w9WgXcQ].%(ext)s"));
+        assert_eq!(std::path::Path::new(&first).components().count(), 1);
+        assert!(!first.chars().any(|c| c.is_control() || "/\\:*?\"<>|".contains(c)));
+        assert!(!first.starts_with('.'));
+        track.id = "aaaaaaaaaaa".into();
+        assert_ne!(output(&track), first);
+        assert_eq!(download_component("...  "), "Unknown");
+        assert_eq!(download_component("Björk"), "Björk");
+        assert_eq!(
+            download_component("~/$HOME/${USER}/%PATH%"),
+            "___HOME__{USER}__PATH_"
+        );
+        let long = download_component(&"音".repeat(100));
+        assert!(long.len() <= 80);
+        assert!(long.chars().all(|c| c == '音'));
+    }
+
+    #[test]
+    fn persistent_download_rejects_invalid_ids_before_io() {
+        let dir = std::env::temp_dir().join(format!(
+            "drift-invalid-download-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+        ));
+        let mut track = download_test_track();
+        for id in ["", "short", "aaaaaaaaaaaa", "../aaaaaaaa", "aaaaa/aaaaa", "aaaaa%aaaaa"] {
+            track.id = id.into();
+            assert_eq!(
+                download_track(&track, &Audio::default(), &dir).unwrap_err(),
+                "invalid YouTube track ID"
+            );
+        }
+        assert!(!dir.exists());
+        track.id = "_-abcDEF012".into();
+        assert!(download_command(&track, &Audio::default(), &dir).is_ok());
+    }
 
     #[test]
     fn wait_until_available_at() {

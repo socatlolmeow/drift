@@ -6,10 +6,11 @@ use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
-use crate::command::{self, Amount, Command, COMMAND_NAMES};
+use crate::command::{self, Amount, Command, DownloadTarget, COMMAND_NAMES};
 use crate::config::{self, Audio, Config};
 use crate::cover;
 use crate::discord::Discord;
+use crate::download;
 use crate::history::History;
 use crate::keys::{Action, Key, Keymap, Lookup};
 use crate::lyrics::{self, Lyrics};
@@ -49,6 +50,14 @@ pub enum AppEvent {
     SavePlaylist {
         name: String,
         result: Result<Vec<Track>, String>,
+    },
+    DownloadProgress {
+        completed: usize,
+        total: usize,
+    },
+    DownloadFinished {
+        directory: std::path::PathBuf,
+        result: Result<download::Summary, String>,
     },
     Media(Cmd),
     Audio {
@@ -182,6 +191,8 @@ pub enum MenuAction {
     Info,
     QueueAll,
     PlayAll,
+    Download,
+    DownloadAll,
     ClearQueue,
     SaveQueue,
     OpenPlaylist,
@@ -302,6 +313,7 @@ pub struct App {
 
     pub status: Option<Status>,
     pub busy: Option<String>,
+    pub download_status: Option<String>,
     pub tick: usize,
     pub should_quit: bool,
 
@@ -413,6 +425,7 @@ impl App {
             save_failed: false,
             status: None,
             busy: None,
+            download_status: None,
             tick: 0,
             should_quit: false,
             search_id: 0,
@@ -728,6 +741,9 @@ impl App {
             Action::GoSimilar => self.go_similar(),
             Action::GoAlbum => self.go_album(),
             Action::SaveAlbum => self.save_album(None),
+            Action::Download => self.download(DownloadTarget::Current),
+            Action::DownloadSelected => self.download(DownloadTarget::Selected),
+            Action::DownloadAll => self.download(DownloadTarget::All),
             Action::Help => self.open_help(),
             Action::Quit => self.should_quit = true,
             Action::Back => self.status = None,
@@ -752,6 +768,69 @@ impl App {
         }
     }
 
+    fn download_tracks(&self, target: DownloadTarget) -> Result<Vec<Track>, String> {
+        let tracks = match target {
+            DownloadTarget::Current => vec![self
+                .now_track()
+                .cloned()
+                .ok_or_else(|| "No current song to download".to_string())?],
+            DownloadTarget::Selected => vec![self
+                .selected_track()
+                .ok_or_else(|| "No song selected; use gD to download a whole playlist".to_string())?],
+            DownloadTarget::All => match self.view {
+                View::Results => self.results.iter().chain(&self.buffered).cloned().collect(),
+                View::Queue => self.queue.clone(),
+                View::Playlists => {
+                    let name = self.open.clone().or_else(|| self.playlist_name(self.selected()));
+                    name.and_then(|name| self.store.playlists.get(&name).cloned())
+                        .unwrap_or_default()
+                }
+                View::RecentlyPlayed => self.history_tracks(false),
+                View::MostPlayed => self.history_tracks(true),
+            },
+        };
+        if tracks.is_empty() {
+            return Err("No songs to download".into());
+        }
+        Ok(tracks)
+    }
+
+    fn download(&mut self, target: DownloadTarget) {
+        match self.download_tracks(target) {
+            Ok(tracks) => self.start_download(move || Ok(tracks)),
+            Err(error) => self.error(error),
+        }
+    }
+
+    fn start_download(
+        &mut self,
+        load: impl FnOnce() -> Result<Vec<Track>, String> + Send + 'static,
+    ) {
+        if self.download_status.is_some() {
+            return self.error("A download is already running; wait for it to finish");
+        }
+        let directory = match self.audio.download_directory() {
+            Ok(directory) => directory,
+            Err(error) => return self.error(error),
+        };
+        self.download_status = Some("Preparing download".into());
+        self.info(format!("Downloading to {}", directory.display()));
+        let audio = self.audio.clone();
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = load().and_then(|tracks| {
+                download::run(
+                    tracks,
+                    |track| player::download_track(track, &audio, &directory),
+                    |completed, total| {
+                        tx.send(AppEvent::DownloadProgress { completed, total }).is_ok()
+                    },
+                )
+            });
+            let _ = tx.send(AppEvent::DownloadFinished { directory, result });
+        });
+    }
+
     /// `G`: open the context menu for whatever is highlighted.
     fn open_menu(&mut self) {
         let mut items: Vec<MenuItem> = Vec::new();
@@ -762,6 +841,7 @@ impl App {
             let n = self.store.playlists.get(&name).map_or(0, Vec::len);
             items.push(menu_item('o', "Open", MenuAction::OpenPlaylist));
             items.push(menu_item('p', "Play", MenuAction::Play));
+            items.push(menu_item('D', "Download playlist", MenuAction::DownloadAll));
             items.push(menu_item(
                 'a',
                 "Append to queue",
@@ -801,6 +881,16 @@ impl App {
                 items.push(menu_item('x', "Remove from playlist", MenuAction::Remove));
             }
             items.push(menu_item('i', "Song info", MenuAction::Info));
+            items.push(menu_item('d', "Download song", MenuAction::Download));
+            let download_all = match self.view {
+                View::Results if self.results_title.starts_with("Album: ") => "Download album",
+                View::Results if self.results_title.starts_with("Playlist: ") => "Download playlist",
+                View::Results => "Download all loaded results",
+                View::Queue => "Download queue",
+                View::Playlists => "Download playlist",
+                View::RecentlyPlayed | View::MostPlayed => "Download all songs",
+            };
+            items.push(menu_item('D', download_all, MenuAction::DownloadAll));
             if self.view == View::Results {
                 items.push(menu_item('Q', "Queue all results", MenuAction::QueueAll));
                 items.push(menu_item('P', "Play all results", MenuAction::PlayAll));
@@ -959,6 +1049,12 @@ impl App {
             }
             MenuAction::QueueAll => self.add_all_results(),
             MenuAction::PlayAll => self.play_all_results(),
+            MenuAction::Download => {
+                if let Some(track) = track {
+                    self.start_download(move || Ok(vec![track]));
+                }
+            }
+            MenuAction::DownloadAll => self.download(DownloadTarget::All),
             MenuAction::ClearQueue => self.clear_queue(),
             MenuAction::SaveQueue => self.prefill_command("save "),
             MenuAction::OpenPlaylist => self.open_selected_playlist(),
@@ -1018,6 +1114,7 @@ impl App {
                     Mode::Normal
                 };
             }
+            KeyCode::Char('D') => self.download(DownloadTarget::Current),
             KeyCode::Char('j') | KeyCode::Down => self.lyrics_scroll = scroll.saturating_add(1),
             KeyCode::Char('k') | KeyCode::Up => self.lyrics_scroll = scroll.saturating_sub(1),
             KeyCode::Char(' ') => self.toggle_pause(),
@@ -1332,6 +1429,7 @@ impl App {
             },
             Command::AddAll => self.add_all_results(),
             Command::PlayAll => self.play_all_results(),
+            Command::Download(target) => self.download(target),
             Command::Remove(Some(n)) => self.remove_from_queue(n - 1),
             Command::Remove(None) if self.view == View::Queue => {
                 let i = self.selected();
@@ -1577,6 +1675,8 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => self.close_collection_pick(),
             KeyCode::Char('s') | KeyCode::Char('S') => self.save_picked_collection(),
+            KeyCode::Char('d') => self.download_picked_collection(),
+            KeyCode::Char('D') => self.download(DownloadTarget::Current),
             KeyCode::Char('j') | KeyCode::Down => self.pick_sel = (self.pick_sel + 1).min(len - 1),
             KeyCode::Char('k') | KeyCode::Up => self.pick_sel = self.pick_sel.saturating_sub(1),
             KeyCode::Char('g') | KeyCode::Home => self.pick_sel = 0,
@@ -1613,6 +1713,21 @@ impl App {
         self.spawn_loader(title, busy, move || {
             ytmusic::browse_tracks(&c.browse_id, &c.title, &c.artist).map(Page::from)
         });
+    }
+
+    fn download_picked_collection(&mut self) {
+        if self.download_status.is_some() {
+            return self.error("A download is already running; wait for it to finish");
+        }
+        let Some(collection) = self.picks.get(self.pick_sel).cloned() else {
+            return self.error("No album or playlist selected");
+        };
+        self.start_download(move || {
+            ytmusic::browse_tracks(&collection.browse_id, &collection.title, &collection.artist)
+        });
+        if self.download_status.is_some() {
+            self.close_collection_pick();
+        }
     }
 
     fn save_picked_collection(&mut self) {
@@ -1785,6 +1900,26 @@ impl App {
                         self.pick_title = title;
                     }
                     Err(e) => self.error(e),
+                }
+            }
+            AppEvent::DownloadProgress { completed, total } => {
+                self.download_status = Some(format!("Downloading {}/{total}", completed + 1));
+            }
+            AppEvent::DownloadFinished { directory, result } => {
+                self.download_status = None;
+                match result {
+                    Ok(summary) if summary.failed == 0 => self.info(format!(
+                        "Saved {} songs to {} (existing files kept)",
+                        summary.saved,
+                        directory.display()
+                    )),
+                    Ok(summary) => self.error(format!(
+                        "Saved {}, failed {}: {}",
+                        summary.saved,
+                        summary.failed,
+                        summary.first_error.as_deref().unwrap_or("Download failed")
+                    )),
+                    Err(error) => self.error(format!("Download failed: {error}")),
                 }
             }
             AppEvent::Media(cmd) => self.on_media(cmd),
@@ -2816,6 +2951,86 @@ mod tests {
         app.on_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 
+    fn check_downloads(app: &mut App) {
+        let playing = track("playing0001", "Playing");
+        let selected = track("selected001", "Selected");
+        let buffered = track("buffered001", "Buffered");
+        app.keymap = Keymap::default();
+        app.pending.clear();
+        app.mode = Mode::Normal;
+        app.view = View::Results;
+        app.on_radio = false;
+        app.queue = vec![playing.clone()];
+        app.current = Some(0);
+        app.results = vec![selected.clone()];
+        app.buffered = vec![buffered.clone()];
+        app.set_selected(0);
+        assert_eq!(app.download_tracks(DownloadTarget::Current).unwrap(), [playing.clone()]);
+        assert_eq!(app.download_tracks(DownloadTarget::Selected).unwrap(), [selected.clone()]);
+        assert_eq!(app.download_tracks(DownloadTarget::All).unwrap(), [selected.clone(), buffered]);
+
+        app.view = View::Queue;
+        assert_eq!(app.download_tracks(DownloadTarget::All).unwrap(), [playing.clone()]);
+        app.store.playlists.clear();
+        app.store.playlists.insert("Downloads".into(), vec![selected.clone()]);
+        app.view = View::Playlists;
+        app.open = None;
+        app.set_selected(0);
+        assert!(app.download_tracks(DownloadTarget::Selected).is_err());
+        assert_eq!(app.download_tracks(DownloadTarget::All).unwrap(), [selected.clone()]);
+        app.open_menu();
+        assert!(app.menu_items.iter().any(|item| item.action == MenuAction::DownloadAll));
+        app.close_menu();
+        app.open_selected_playlist();
+        assert_eq!(app.download_tracks(DownloadTarget::Selected).unwrap(), [selected.clone()]);
+        assert_eq!(app.download_tracks(DownloadTarget::All).unwrap(), [selected]);
+        app.open_menu();
+        assert!(app.menu_items.iter().any(|item| item.action == MenuAction::Download));
+        app.close_menu();
+
+        app.audio.download_dir.clear();
+        for mode in [Mode::Normal, Mode::Lyrics, Mode::LyricsArtwork] {
+            app.mode = mode;
+            app.status = None;
+            press(app, KeyCode::Char('D'));
+            assert!(app.status.as_ref().is_some_and(|status| status.level == Level::Error));
+            assert!(app.download_status.is_none());
+        }
+        app.mode = Mode::Normal;
+        app.audio = Audio::default();
+        app.download_status = Some("Downloading 1/2".into());
+        app.start_download(|| panic!("must not start overlapping batches"));
+        assert!(app.status.as_ref().unwrap().text.contains("already running"));
+
+        app.busy = Some("Searching".into());
+        app.on_event(AppEvent::DownloadProgress { completed: 1, total: 2 });
+        assert_eq!(app.download_status.as_deref(), Some("Downloading 2/2"));
+        app.on_event(AppEvent::DownloadFinished {
+            directory: "downloads".into(),
+            result: Ok(download::Summary { saved: 1, failed: 1, first_error: Some("unavailable".into()) }),
+        });
+        assert!(app.download_status.is_none());
+        assert_eq!(app.busy.as_deref(), Some("Searching"));
+        assert!(app.status.as_ref().unwrap().text.contains("failed 1"));
+        assert_eq!(app.queue, [playing]);
+        assert_eq!(app.current, Some(0));
+
+        let (tx, rx) = mpsc::channel();
+        let old_tx = std::mem::replace(&mut app.tx, tx);
+        app.start_download(|| Err("offline".into()));
+        assert!(app.download_status.is_some());
+        app.on_event(rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap());
+        assert!(app.download_status.is_none());
+        assert_eq!(app.status.as_ref().unwrap().text, "Download failed: offline");
+        app.tx = old_tx;
+        app.current = None;
+        assert!(app.download_tracks(DownloadTarget::Current).is_err());
+        app.view = View::Results;
+        app.results.clear();
+        app.buffered.clear();
+        assert!(app.download_tracks(DownloadTarget::All).is_err());
+    }
+
     fn check_artist_popup(app: &mut App) {
         let mut t = track("zzzzzzzzzzz", "Duet");
         t.artist = "A & B".into();
@@ -3134,6 +3349,8 @@ mod tests {
             app.store.playlists.get("Background Album").map(Vec::len),
             Some(1)
         );
+
+        check_downloads(&mut app);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

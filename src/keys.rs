@@ -47,6 +47,9 @@ pub enum Action {
     GoSimilar,
     GoAlbum,
     SaveAlbum,
+    Download,
+    DownloadSelected,
+    DownloadAll,
     Help,
     Quit,
     Back,
@@ -94,6 +97,9 @@ const DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("go_similar", Action::GoSimilar, &["gs"]),
     ("go_album", Action::GoAlbum, &["gb"]),
     ("save_album", Action::SaveAlbum, &["gB"]),
+    ("download", Action::Download, &["D"]),
+    ("download_selected", Action::DownloadSelected, &["gd"]),
+    ("download_all", Action::DownloadAll, &["gD"]),
     ("help", Action::Help, &["?"]),
     ("quit", Action::Quit, &["q"]),
     ("back", Action::Back, &["backspace", "esc"]),
@@ -296,6 +302,23 @@ mod tests {
 
     fn seq(text: &str) -> Vec<Key> {
         parse_sequence(text).unwrap()
+    }
+
+    #[test]
+    fn download_bindings() {
+        let map = Keymap::default();
+        for (keys, expected) in [
+            ("D", Action::Download),
+            ("gd", Action::DownloadSelected),
+            ("gD", Action::DownloadAll),
+            ("dd", Action::Delete),
+            ("ctrl+d", Action::HalfPageDown),
+        ] {
+            assert!(matches!(map.lookup(&seq(keys)), Lookup::Run(action) if action == expected));
+        }
+        let map = Keymap::build(&custom(&[("download", &["ctrl+s"])])).unwrap();
+        assert!(matches!(map.lookup(&seq("ctrl+s")), Lookup::Run(Action::Download)));
+        assert!(matches!(map.lookup(&seq("D")), Lookup::Nothing));
     }
 
     fn run(map: &Keymap, text: &str) -> Option<Action> {

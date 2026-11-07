@@ -6,6 +6,13 @@ pub enum Amount {
     Delta(f64),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadTarget {
+    Current,
+    Selected,
+    All,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Search(String),
@@ -20,6 +27,7 @@ pub enum Command {
     Add(Option<usize>),
     AddAll,
     PlayAll,
+    Download(DownloadTarget),
     Remove(Option<usize>),
     Clear,
     ShowResults,
@@ -61,6 +69,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "add",
     "addall",
     "playall",
+    "download",
     "remove",
     "clear",
     "results",
@@ -165,6 +174,12 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
         "add" | "a" => Add(index_arg(arg, "add")?),
         "addall" => AddAll,
         "playall" => PlayAll,
+        "download" | "dl" => Download(match arg.to_ascii_lowercase().as_str() {
+            "" | "current" => DownloadTarget::Current,
+            "selected" => DownloadTarget::Selected,
+            "all" => DownloadTarget::All,
+            _ => return Err("usage: :download [current|selected|all]".into()),
+        }),
         "remove" | "rm" | "del" => Remove(index_arg(arg, "remove")?),
         "clear" => Clear,
         "results" | "res" => ShowResults,
@@ -231,6 +246,22 @@ mod tests {
             Ok(Some(Command::Search("lofi beats".into())))
         );
         assert!(parse("search").is_err());
+    }
+
+    #[test]
+    fn download_commands() {
+        for (input, target) in [
+            ("download", DownloadTarget::Current),
+            (":download current", DownloadTarget::Current),
+            ("dl selected", DownloadTarget::Selected),
+            ("download all", DownloadTarget::All),
+            ("DOWNLOAD ALL", DownloadTarget::All),
+        ] {
+            assert_eq!(parse(input), Ok(Some(Command::Download(target))));
+        }
+        assert!(parse("download unknown").is_err());
+        assert!(parse("download all extra").is_err());
+        assert!(COMMAND_NAMES.contains(&"download"));
     }
 
     #[test]
