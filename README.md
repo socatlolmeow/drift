@@ -265,7 +265,7 @@ Files use the best available audio-only format in its original container, such a
 
 This is off by default.
 
-1. Create an application at https://discord.com/developers/applications. Its name is what shows up after "Listening to".
+1. Create an application at https://discord.com/developers/applications.
 2. Copy the Application ID into `client_id` under `[discord]` in `config.toml`.
 3. Restart Drift.
 
