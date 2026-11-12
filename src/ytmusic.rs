@@ -102,7 +102,11 @@ fn browse_pages(
     mut fetch: impl FnMut(&str) -> Result<Value, String>,
 ) -> Result<Vec<Track>, String> {
     let mut tracks = parse_browse(&first, playlist);
-    let mut next = if playlist { find_continuation(&first) } else { None };
+    let mut next = if playlist {
+        find_continuation(&first)
+    } else {
+        None
+    };
     let mut seen = std::collections::HashSet::new();
     let mut known: std::collections::HashSet<String> =
         tracks.iter().map(|track| track.id.clone()).collect();
@@ -111,7 +115,11 @@ fn browse_pages(
             return Err("YouTube Music repeated a playlist page; could not load all songs".into());
         }
         let page = fetch(&token).map_err(|error| format!("Could not load all songs: {error}"))?;
-        tracks.extend(parse_browse(&page, playlist).into_iter().filter(|track| known.insert(track.id.clone())));
+        tracks.extend(
+            parse_browse(&page, playlist)
+                .into_iter()
+                .filter(|track| known.insert(track.id.clone())),
+        );
         next = find_continuation(&page);
     }
     Ok(tracks)
@@ -846,10 +854,12 @@ not json
 
     fn playlist_page(start: usize, count: usize, next: Option<&str>) -> Value {
         let items: Vec<_> = (start..start + count)
-            .map(|id| json!({"musicResponsiveListItemRenderer": {
-                "playlistItemData": {"videoId": format!("{id:011}")},
-                "flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": run("Song")}]
-            }}))
+            .map(|id| {
+                json!({"musicResponsiveListItemRenderer": {
+                    "playlistItemData": {"videoId": format!("{id:011}")},
+                    "flexColumns": [{"musicResponsiveListItemFlexColumnRenderer": run("Song")}]
+                }})
+            })
             .collect();
         let mut page = json!({"contents": items});
         if let Some(next) = next {
@@ -865,7 +875,8 @@ not json
             let page = token.parse::<usize>().unwrap();
             let next = (page < 7).then(|| (page + 1).to_string());
             Ok(playlist_page(page * 50, 50, next.as_deref()))
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(tracks.len(), 400);
         assert_eq!(tracks.last().unwrap().id, "00000000399");
     }
@@ -887,7 +898,8 @@ not json
                 "last" => playlist_page(1, 1, None),
                 _ => panic!("unexpected page"),
             })
-        }).unwrap();
+        })
+        .unwrap();
         assert_eq!(tracks.len(), 2);
     }
 

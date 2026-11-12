@@ -94,6 +94,7 @@ pub struct Audio {
     pub cookies_from_browser: String,
 }
 
+#[cfg(unix)]
 impl Default for Audio {
     fn default() -> Self {
         Audio {
@@ -105,6 +106,17 @@ impl Default for Audio {
     }
 }
 
+#[cfg(windows)]
+impl Default for Audio {
+    fn default() -> Self {
+        Audio {
+            download: false,
+            download_max_minutes: 15,
+            download_dir : "%USERPROFILE/Music/drift".into(),
+            cookies_from_browser: String::new(),
+        }
+    }
+}
 impl Audio {
     pub fn download_directory(&self) -> Result<PathBuf, String> {
         let dir = self.download_dir.as_str();
@@ -527,11 +539,17 @@ mod tests {
         let mut audio = Audio::default();
         assert_eq!(audio.download_dir, "~/Music/drift");
         let home = dirs::home_dir().unwrap();
-        assert_eq!(audio.download_directory().unwrap(), home.join("Music/drift"));
+        assert_eq!(
+            audio.download_directory().unwrap(),
+            home.join("Music/drift")
+        );
         audio.download_dir = "~".into();
         assert_eq!(audio.download_directory().unwrap(), home);
         audio.download_dir = "~//Music/drift".into();
-        assert_eq!(audio.download_directory().unwrap(), home.join("Music/drift"));
+        assert_eq!(
+            audio.download_directory().unwrap(),
+            home.join("Music/drift")
+        );
         audio.download_dir = "music/downloads".into();
         assert_eq!(
             audio.download_directory().unwrap(),

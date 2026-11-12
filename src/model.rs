@@ -133,6 +133,9 @@ pub fn parse_clock(s: &str) -> Option<f64> {
             return None;
         }
         total = total * 60.0 + v;
+        if !total.is_finite() {
+            return None;
+        }
     }
     Some(total)
 }
@@ -189,6 +192,7 @@ mod tests {
         assert_eq!(parse_clock("abc"), None);
         assert_eq!(parse_clock("NaN"), None);
         assert_eq!(parse_clock("inf"), None);
+        assert_eq!(parse_clock("1e308:0"), None);
         assert_eq!(fmt_time(225.0), "3:45");
         assert_eq!(fmt_time(3723.0), "1:02:03");
     }

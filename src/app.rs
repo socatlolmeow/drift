@@ -774,14 +774,17 @@ impl App {
                 .now_track()
                 .cloned()
                 .ok_or_else(|| "No current song to download".to_string())?],
-            DownloadTarget::Selected => vec![self
-                .selected_track()
-                .ok_or_else(|| "No song selected; use gD to download a whole playlist".to_string())?],
+            DownloadTarget::Selected => vec![self.selected_track().ok_or_else(|| {
+                "No song selected; use gD to download a whole playlist".to_string()
+            })?],
             DownloadTarget::All => match self.view {
                 View::Results => self.results.iter().chain(&self.buffered).cloned().collect(),
                 View::Queue => self.queue.clone(),
                 View::Playlists => {
-                    let name = self.open.clone().or_else(|| self.playlist_name(self.selected()));
+                    let name = self
+                        .open
+                        .clone()
+                        .or_else(|| self.playlist_name(self.selected()));
                     name.and_then(|name| self.store.playlists.get(&name).cloned())
                         .unwrap_or_default()
                 }
@@ -823,7 +826,8 @@ impl App {
                     tracks,
                     |track| player::download_track(track, &audio, &directory),
                     |completed, total| {
-                        tx.send(AppEvent::DownloadProgress { completed, total }).is_ok()
+                        tx.send(AppEvent::DownloadProgress { completed, total })
+                            .is_ok()
                     },
                 )
             });
@@ -884,7 +888,9 @@ impl App {
             items.push(menu_item('d', "Download song", MenuAction::Download));
             let download_all = match self.view {
                 View::Results if self.results_title.starts_with("Album: ") => "Download album",
-                View::Results if self.results_title.starts_with("Playlist: ") => "Download playlist",
+                View::Results if self.results_title.starts_with("Playlist: ") => {
+                    "Download playlist"
+                }
                 View::Results => "Download all loaded results",
                 View::Queue => "Download queue",
                 View::Playlists => "Download playlist",
@@ -1877,8 +1883,10 @@ impl App {
                             .into_iter()
                             .filter(|t| known.insert(t.id.clone()))
                             .collect();
+                        // A repeated token cannot advance the search.
+                        let repeated = page.next.is_some() && page.next == self.next_page;
                         self.buffered.extend(fresh);
-                        self.next_page = page.next;
+                        self.next_page = if repeated { None } else { page.next };
                         self.reveal_buffered();
                     }
                     Err(e) => {
@@ -2513,16 +2521,24 @@ impl App {
         if !matches!(self.play_state, PlayState::Playing | PlayState::Paused) {
             return self.error("Nothing is playing");
         }
+        let position = match amount {
+            Amount::Delta(d) => (self.position + d).max(0.0),
+            Amount::Abs(a) => a,
+        };
+        let value = match amount {
+            Amount::Delta(d) => d,
+            Amount::Abs(a) => a,
+        };
+        if !value.is_finite() || !position.is_finite() || position < 0.0 {
+            return self.error("Seek position is out of range");
+        }
         let r = match amount {
             Amount::Delta(d) => self.with_player(|p| p.seek_relative(d)),
             Amount::Abs(a) => self.with_player(|p| p.seek_absolute(a)),
         };
         match r {
             Ok(()) => {
-                self.position = match amount {
-                    Amount::Delta(d) => (self.position + d).max(0.0),
-                    Amount::Abs(a) => a,
-                };
+                self.position = position;
             }
             Err(e) => self.error(format!("{e:#}")),
         }
@@ -2639,7 +2655,16 @@ impl App {
             return self.error("No such queue entry");
         }
         let removed = self.queue.remove(i);
-        self.played.clear();
+        // Keep shuffle history attached to the same songs after indices shift.
+        self.played = self
+            .played
+            .iter()
+            .filter_map(|&index| match index.cmp(&i) {
+                std::cmp::Ordering::Less => Some(index),
+                std::cmp::Ordering::Equal => None,
+                std::cmp::Ordering::Greater => Some(index - 1),
+            })
+            .collect();
         let active = self.play_state != PlayState::Stopped;
         match self.current {
             Some(c) if c == i && self.on_radio => self.current = i.checked_sub(1),
@@ -2677,7 +2702,19 @@ impl App {
         }
         let j = j as usize;
         self.queue.swap(i, j);
-        self.played.clear();
+        self.played = self
+            .played
+            .iter()
+            .map(|&index| {
+                if index == i {
+                    j
+                } else if index == j {
+                    i
+                } else {
+                    index
+                }
+            })
+            .collect();
         if self.current == Some(i) {
             self.current = Some(j);
         } else if self.current == Some(j) {
@@ -2965,27 +3002,62 @@ mod tests {
         app.results = vec![selected.clone()];
         app.buffered = vec![buffered.clone()];
         app.set_selected(0);
-        assert_eq!(app.download_tracks(DownloadTarget::Current).unwrap(), [playing.clone()]);
-        assert_eq!(app.download_tracks(DownloadTarget::Selected).unwrap(), [selected.clone()]);
-        assert_eq!(app.download_tracks(DownloadTarget::All).unwrap(), [selected.clone(), buffered]);
+        assert_eq!(
+            app.download_tracks(DownloadTarget::Current)
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&playing)
+        );
+        assert_eq!(
+            app.download_tracks(DownloadTarget::Selected)
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&selected)
+        );
+        assert_eq!(
+            app.download_tracks(DownloadTarget::All).unwrap(),
+            [selected.clone(), buffered]
+        );
 
         app.view = View::Queue;
-        assert_eq!(app.download_tracks(DownloadTarget::All).unwrap(), [playing.clone()]);
+        assert_eq!(
+            app.download_tracks(DownloadTarget::All).unwrap().as_slice(),
+            std::slice::from_ref(&playing)
+        );
         app.store.playlists.clear();
-        app.store.playlists.insert("Downloads".into(), vec![selected.clone()]);
+        app.store
+            .playlists
+            .insert("Downloads".into(), vec![selected.clone()]);
         app.view = View::Playlists;
         app.open = None;
         app.set_selected(0);
         assert!(app.download_tracks(DownloadTarget::Selected).is_err());
-        assert_eq!(app.download_tracks(DownloadTarget::All).unwrap(), [selected.clone()]);
+        assert_eq!(
+            app.download_tracks(DownloadTarget::All).unwrap().as_slice(),
+            std::slice::from_ref(&selected)
+        );
         app.open_menu();
-        assert!(app.menu_items.iter().any(|item| item.action == MenuAction::DownloadAll));
+        assert!(app
+            .menu_items
+            .iter()
+            .any(|item| item.action == MenuAction::DownloadAll));
         app.close_menu();
         app.open_selected_playlist();
-        assert_eq!(app.download_tracks(DownloadTarget::Selected).unwrap(), [selected.clone()]);
-        assert_eq!(app.download_tracks(DownloadTarget::All).unwrap(), [selected]);
+        assert_eq!(
+            app.download_tracks(DownloadTarget::Selected)
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&selected)
+        );
+        assert_eq!(
+            app.download_tracks(DownloadTarget::All).unwrap(),
+            [selected]
+        );
         app.open_menu();
-        assert!(app.menu_items.iter().any(|item| item.action == MenuAction::Download));
+        assert!(app
+            .menu_items
+            .iter()
+            .any(|item| item.action == MenuAction::Download));
         app.close_menu();
 
         app.audio.download_dir.clear();
@@ -2993,21 +3065,36 @@ mod tests {
             app.mode = mode;
             app.status = None;
             press(app, KeyCode::Char('D'));
-            assert!(app.status.as_ref().is_some_and(|status| status.level == Level::Error));
+            assert!(app
+                .status
+                .as_ref()
+                .is_some_and(|status| status.level == Level::Error));
             assert!(app.download_status.is_none());
         }
         app.mode = Mode::Normal;
         app.audio = Audio::default();
         app.download_status = Some("Downloading 1/2".into());
         app.start_download(|| panic!("must not start overlapping batches"));
-        assert!(app.status.as_ref().unwrap().text.contains("already running"));
+        assert!(app
+            .status
+            .as_ref()
+            .unwrap()
+            .text
+            .contains("already running"));
 
         app.busy = Some("Searching".into());
-        app.on_event(AppEvent::DownloadProgress { completed: 1, total: 2 });
+        app.on_event(AppEvent::DownloadProgress {
+            completed: 1,
+            total: 2,
+        });
         assert_eq!(app.download_status.as_deref(), Some("Downloading 2/2"));
         app.on_event(AppEvent::DownloadFinished {
             directory: "downloads".into(),
-            result: Ok(download::Summary { saved: 1, failed: 1, first_error: Some("unavailable".into()) }),
+            result: Ok(download::Summary {
+                saved: 1,
+                failed: 1,
+                first_error: Some("unavailable".into()),
+            }),
         });
         assert!(app.download_status.is_none());
         assert_eq!(app.busy.as_deref(), Some("Searching"));
@@ -3021,7 +3108,10 @@ mod tests {
         assert!(app.download_status.is_some());
         app.on_event(rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap());
         assert!(app.download_status.is_none());
-        assert_eq!(app.status.as_ref().unwrap().text, "Download failed: offline");
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "Download failed: offline"
+        );
         app.tx = old_tx;
         app.current = None;
         assert!(app.download_tracks(DownloadTarget::Current).is_err());
@@ -3087,6 +3177,16 @@ mod tests {
         });
         assert_eq!(app.results.len() + app.buffered.len(), 26);
         assert_eq!(app.results.last().unwrap().title, "New song");
+
+        app.next_page = Some("repeat".into());
+        app.on_event(AppEvent::More {
+            generation: app.results_gen,
+            result: Ok(Page {
+                tracks: vec![app.results[0].clone()],
+                next: Some("repeat".into()),
+            }),
+        });
+        assert!(app.next_page.is_none());
     }
 
     fn now_title(app: &App) -> Option<&str> {
@@ -3351,6 +3451,35 @@ mod tests {
         );
 
         check_downloads(&mut app);
+
+        app.view = View::Queue;
+        app.open = None;
+        app.on_radio = false;
+        app.play_state = PlayState::Stopped;
+        app.queue = vec![
+            track("aaaaaaaaaaa", "A"),
+            track("bbbbbbbbbbb", "B"),
+            track("ccccccccccc", "C"),
+        ];
+        app.current = Some(1);
+        app.played = HashSet::from([0, 1]);
+        app.set_selected(1);
+        app.move_queue_item(1);
+        assert_eq!(app.current, Some(2));
+        assert_eq!(app.played, HashSet::from([0, 2]));
+        app.remove_from_queue(0);
+        assert_eq!(app.current, Some(1));
+        assert_eq!(app.played, HashSet::from([1]));
+
+        app.play_state = PlayState::Playing;
+        app.position = f64::MAX;
+        app.seek(Amount::Delta(f64::MAX));
+        assert_eq!(app.position, f64::MAX);
+        assert_eq!(
+            app.status.as_ref().unwrap().text,
+            "Seek position is out of range"
+        );
+        app.play_state = PlayState::Stopped;
 
         let _ = std::fs::remove_dir_all(&dir);
     }

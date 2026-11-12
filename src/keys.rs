@@ -317,7 +317,10 @@ mod tests {
             assert!(matches!(map.lookup(&seq(keys)), Lookup::Run(action) if action == expected));
         }
         let map = Keymap::build(&custom(&[("download", &["ctrl+s"])])).unwrap();
-        assert!(matches!(map.lookup(&seq("ctrl+s")), Lookup::Run(Action::Download)));
+        assert!(matches!(
+            map.lookup(&seq("ctrl+s")),
+            Lookup::Run(Action::Download)
+        ));
         assert!(matches!(map.lookup(&seq("D")), Lookup::Nothing));
     }
 

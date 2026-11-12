@@ -10,7 +10,7 @@ use crate::model::{fmt_time, Track};
 use ratatui_image::{Resize, StatefulImage};
 
 /* The three ways lyrics get drawn: the side panel, centered fullscreen, and
-   the left-aligned column next to the cover art. */
+the left-aligned column next to the cover art. */
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LyricsLayout {
     Panel,
@@ -885,9 +885,9 @@ fn sample_color(img: &image::RgbImage, gx: u32, gy: u32, gw: u32, gh: u32) -> Co
 }
 
 /* Fallback for terminals with no image protocol. Every cell shows two
-   pixels stacked on top of each other (upper half block: fg is the top
-   one, bg is the bottom one). It's blocky, but you can still tell what the
-   cover is. */
+pixels stacked on top of each other (upper half block: fg is the top
+one, bg is the bottom one). It's blocky, but you can still tell what the
+cover is. */
 fn draw_cover_blocks(f: &mut Frame, img: &image::RgbImage, area: Rect) {
     if area.is_empty() || img.width() == 0 || img.height() == 0 {
         return;
@@ -950,8 +950,8 @@ fn thin_bar(width: usize, ratio: f64, accent: Color) -> Line<'static> {
 }
 
 /* Draws the cover into `art`. If there's nothing to show yet, prints a short
-   message across the whole `column` instead, so it doesn't wrap in the
-   narrow art box. */
+message across the whole `column` instead, so it doesn't wrap in the
+narrow art box. */
 fn draw_cover_art(f: &mut Frame, app: &mut App, track_id: &str, art: Rect, column: Rect) {
     // a cover only counts if it belongs to the song playing right now
     let fresh = app.cover_id.as_deref() == Some(track_id);
@@ -1069,7 +1069,7 @@ fn draw_progress(f: &mut Frame, app: &App, track: &Track, bar_row: Rect, time_ro
 }
 
 /* Left column of the cover view. Everything is stacked and centered
-   vertically: cover, gap, title, artist, progress bar, times. */
+vertically: cover, gap, title, artist, progress bar, times. */
 fn draw_cover_track(f: &mut Frame, app: &mut App, area: Rect) {
     if area.is_empty() {
         return;
@@ -1090,7 +1090,11 @@ fn draw_cover_track(f: &mut Frame, app: &mut App, area: Rect) {
     // and drop the cover completely when the terminal is really short.
     let max_art = area.height.saturating_sub(INFO_ROWS).min(area.width / 2);
     let art_h = if max_art >= 4 { max_art * 3 / 4 } else { 0 };
-    let used = if art_h > 0 { art_h + INFO_ROWS } else { INFO_ROWS - 1 };
+    let used = if art_h > 0 {
+        art_h + INFO_ROWS
+    } else {
+        INFO_ROWS - 1
+    };
     let total = used.min(area.height);
     // the text below lines up with the cover's edges
     let stack_w = if art_h > 0 {
@@ -1435,7 +1439,10 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("add", "queue the selected result  ·  add N"),
     ("addall", "queue all results"),
     ("playall", "play all results"),
-    ("download", "save audio files  ·  download [current|selected|all]"),
+    (
+        "download",
+        "save audio files  ·  download [current|selected|all]",
+    ),
     ("remove", "remove from the queue  ·  remove N"),
     ("clear", "empty the queue"),
     ("results", "show the Results tab"),
@@ -1606,9 +1613,10 @@ fn draw_palette(f: &mut Frame, app: &App, area: Rect) {
         ));
     } else {
         let sel = app.cycling().then_some(app.cmd_sel);
-        let start = sel.map_or(0, |s| (s + 1).saturating_sub(MAX_ROWS));
+        let visible = MAX_ROWS.min(list.height as usize);
+        let start = sel.map_or(0, |s| (s + 1).saturating_sub(visible));
         let width = list.width as usize;
-        for (i, name) in matches.iter().enumerate().skip(start).take(MAX_ROWS) {
+        for (i, name) in matches.iter().enumerate().skip(start).take(visible) {
             let text = format!(" {name:<10}{}", cmd_info(name));
             let text: String = text.chars().take(width).collect();
             lines.push(if Some(i) == sel {
@@ -1680,9 +1688,13 @@ fn draw_menu(f: &mut Frame, app: &App, area: Rect) {
 
     let width = inner.width as usize;
     let accent = app.accent;
+    let visible = inner.height as usize;
+    let start = (app.menu_sel + 1).saturating_sub(visible);
     let lines: Vec<Line> = items
         .iter()
         .enumerate()
+        .skip(start)
+        .take(visible)
         .map(|(i, it)| {
             let key = if it.key == NO_KEY { ' ' } else { it.key };
             let label = format!("{:<label_w$}", it.label);
@@ -1799,9 +1811,18 @@ const HELP: &[(&str, &str)] = &[
     ("DOWNLOADS", "#"),
     ("D", "download the current song to audio.download_dir"),
     ("gd", "download the highlighted song"),
-    ("gD", "download the album, playlist, queue or all loaded results"),
-    (":download [target]", "target: current (default), selected or all; alias :dl"),
-    ("d in album picker", "download the whole album or playlist; Enter opens it to choose one song"),
+    (
+        "gD",
+        "download the album, playlist, queue or all loaded results",
+    ),
+    (
+        ":download [target]",
+        "target: current (default), selected or all; alias :dl",
+    ),
+    (
+        "d in album picker",
+        "download the whole album or playlist; Enter opens it to choose one song",
+    ),
     ("SONG MENU  ( G )", "#"),
     ("G", "menu for the highlighted song or playlist"),
     ("j k  ⏎", "move / choose (the yellow letter is a shortcut)"),
@@ -1935,10 +1956,14 @@ fn draw_artist_picker(f: &mut Frame, app: &App, area: Rect) {
         width: w,
         height: h,
     };
+    let visible = h.saturating_sub(3) as usize;
+    let start = (app.artist_sel + 1).saturating_sub(visible);
     let mut lines: Vec<Line> = app
         .artist_opts
         .iter()
         .enumerate()
+        .skip(start)
+        .take(visible)
         .map(|(i, name)| {
             let text = format!(" {} {name}", i + 1);
             if i == app.artist_sel {
@@ -2078,7 +2103,11 @@ mod tests {
         let (rows, focus) = lyric_rows(&lyrics, 11.0, 40, true, true, Color::Cyan);
         let focus = focus.unwrap();
         let active = &rows[focus];
-        let active_text: String = active.spans.iter().map(|span| span.content.as_ref()).collect();
+        let active_text: String = active
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
         assert!(active_text.contains("current"));
         assert_eq!(active.spans[0].style.bg, Some(LYRIC_HIGHLIGHT_BG));
         assert_eq!(rows[focus - 1].width(), 0);
@@ -2303,6 +2332,32 @@ mod tests {
         key(&mut app, KeyCode::Char('q'));
 
         check_artwork_layout(&mut app);
+
+        app.mode = Mode::Menu;
+        app.menu_items = (0..20)
+            .map(|i| crate::app::MenuItem {
+                key: NO_KEY,
+                label: format!("Option {i}"),
+                detail: String::new(),
+                action: MenuAction::Info,
+            })
+            .collect();
+        app.menu_sel = 19;
+        let mut short = Terminal::new(TestBackend::new(60, 10)).unwrap();
+        short.draw(|f| draw_menu(f, &app, f.area())).unwrap();
+        assert!(text(&short).contains("Option 19"));
+        app.artist_opts = (0..20).map(|i| format!("Artist {i}")).collect();
+        app.artist_sel = 19;
+        short
+            .draw(|f| draw_artist_picker(f, &app, f.area()))
+            .unwrap();
+        assert!(text(&short).contains("Artist 19"));
+
+        app.mode = Mode::Normal;
+        app.on_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
+        app.on_key(KeyEvent::new(KeyCode::BackTab, KeyModifiers::NONE));
+        short.draw(|f| draw_palette(f, &app, f.area())).unwrap();
+        assert!(text(&short).contains("help"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

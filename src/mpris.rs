@@ -88,7 +88,7 @@ mod imp {
             }
             self.state = state;
             self.secs = secs;
-            let progress = Some(MediaPosition(Duration::from_secs_f64(pos)));
+            let progress = Duration::try_from_secs_f64(pos).ok().map(MediaPosition);
             let _ = self.controls.set_playback(match state {
                 PlayState::Playing | PlayState::Loading => MediaPlayback::Playing { progress },
                 PlayState::Paused => MediaPlayback::Paused { progress },

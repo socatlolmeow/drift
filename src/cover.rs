@@ -38,9 +38,7 @@ fn trim_black_bars(image: DynamicImage) -> DynamicImage {
         .take_while(|&y| dark_row(&rgb, y, 0, w))
         .count() as u32;
     let (y0, y1) = (top, h - bottom);
-    let left = (0..w)
-        .take_while(|&x| dark_col(&rgb, x, y0, y1))
-        .count() as u32;
+    let left = (0..w).take_while(|&x| dark_col(&rgb, x, y0, y1)).count() as u32;
     let right = (0..w)
         .rev()
         .take_while(|&x| dark_col(&rgb, x, y0, y1))
@@ -71,6 +69,30 @@ pub fn thumbnail(image: &RgbImage) -> RgbImage {
 
 pub fn supports_protocol(protocol: ProtocolType) -> bool {
     matches!(protocol, ProtocolType::Kitty | ProtocolType::Iterm2)
+}
+
+/// Use the same track artwork as Discord, with a small decoded image kept in memory.
+pub fn fetch(id: &str) -> Option<RgbImage> {
+    if !is_valid_id(id) {
+        return None;
+    }
+    let response = ureq::get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))
+        .timeout(Duration::from_secs(10))
+        .call()
+        .ok()?;
+    let mut bytes = Vec::new();
+    response
+        .into_reader()
+        .take(2 * 1024 * 1024)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Jpeg);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(4096);
+    limits.max_image_height = Some(4096);
+    reader.limits(limits);
+    Some(square_cover(reader.decode().ok()?))
 }
 
 #[cfg(test)]
@@ -142,28 +164,4 @@ mod tests {
         assert_eq!(cover.get_pixel(0, 0).0, [255, 255, 255]);
         assert_eq!(cover.get_pixel(999, 999).0, [255, 255, 255]);
     }
-}
-
-/// Use the same track artwork as Discord, with a small decoded image kept in memory.
-pub fn fetch(id: &str) -> Option<RgbImage> {
-    if !is_valid_id(id) {
-        return None;
-    }
-    let response = ureq::get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))
-        .timeout(Duration::from_secs(10))
-        .call()
-        .ok()?;
-    let mut bytes = Vec::new();
-    response
-        .into_reader()
-        .take(2 * 1024 * 1024)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    let mut reader =
-        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Jpeg);
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(4096);
-    limits.max_image_height = Some(4096);
-    reader.limits(limits);
-    Some(square_cover(reader.decode().ok()?))
 }

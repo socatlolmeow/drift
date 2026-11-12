@@ -75,7 +75,7 @@ impl Discord {
         let paused = state == PlayState::Paused;
         let same_track = self.track.as_deref() == Some(track.id.as_str());
         let was_paused = self.state == PlayState::Paused;
-        let on_time = paused || (start - self.start).abs() < DRIFT_TOLERANCE_MS;
+        let on_time = paused || start.abs_diff(self.start) < DRIFT_TOLERANCE_MS as u64;
         if same_track && paused == was_paused && self.state != PlayState::Stopped && on_time {
             self.state = state;
             return;

@@ -65,7 +65,7 @@ mod ipc {
     /// `WriteFile` on a clone of that handle, which would deadlock the player.
     /// So we poll with `PeekNamedPipe` and only read when data is waiting.
     pub struct Reader(File);
-
+g
     impl Read for Reader {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             if buf.is_empty() {
@@ -392,8 +392,7 @@ pub fn download_track(
     dir: &std::path::Path,
 ) -> Result<(), String> {
     let mut cmd = download_command(track, audio, dir)?;
-    std::fs::create_dir_all(dir)
-        .map_err(|e| format!("can't create {}: {e}", dir.display()))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
     let out = cmd
         .output()
         .map_err(|e| format!("could not run yt-dlp ({e}); is it installed and on PATH?"))?;
@@ -510,10 +509,9 @@ pub fn resolve_stream(id: &str, audio: &Audio) -> Result<String, String> {
 }
 
 fn wait_until(at: u64, now: SystemTime) -> Duration {
-    let target = UNIX_EPOCH + Duration::from_secs(at);
-    target
-        .duration_since(now)
-        .unwrap_or_default()
+    let elapsed = now.duration_since(UNIX_EPOCH).unwrap_or_default();
+    Duration::from_secs(at)
+        .saturating_sub(elapsed)
         .min(Duration::from_secs(30))
 }
 
@@ -636,7 +634,9 @@ mod tests {
         assert_eq!(first.matches('%').count(), 1);
         assert!(first.ends_with(" [dQw4w9WgXcQ].%(ext)s"));
         assert_eq!(std::path::Path::new(&first).components().count(), 1);
-        assert!(!first.chars().any(|c| c.is_control() || "/\\:*?\"<>|".contains(c)));
+        assert!(!first
+            .chars()
+            .any(|c| c.is_control() || "/\\:*?\"<>|".contains(c)));
         assert!(!first.starts_with('.'));
         track.id = "aaaaaaaaaaa".into();
         assert_ne!(output(&track), first);
@@ -656,10 +656,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!(
             "drift-invalid-download-{}-{}",
             std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
         ));
         let mut track = download_test_track();
-        for id in ["", "short", "aaaaaaaaaaaa", "../aaaaaaaa", "aaaaa/aaaaa", "aaaaa%aaaaa"] {
+        for id in [
+            "",
+            "short",
+            "aaaaaaaaaaaa",
+            "../aaaaaaaa",
+            "aaaaa/aaaaa",
+            "aaaaa%aaaaa",
+        ] {
             track.id = id.into();
             assert_eq!(
                 download_track(&track, &Audio::default(), &dir).unwrap_err(),
@@ -678,6 +688,7 @@ mod tests {
         assert_eq!(wait_until(0, now), Duration::ZERO);
         assert_eq!(wait_until(999, now), Duration::ZERO);
         assert_eq!(wait_until(5_000, now), Duration::from_secs(30));
+        assert_eq!(wait_until(u64::MAX, now), Duration::from_secs(30));
     }
 
     #[test]
