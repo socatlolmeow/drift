@@ -106,17 +106,6 @@ impl Default for Audio {
     }
 }
 
-#[cfg(windows)]
-impl Default for Audio {
-    fn default() -> Self {
-        Audio {
-            download: false,
-            download_max_minutes: 15,
-            download_dir : "%USERPROFILE/Music/drift".into(),
-            cookies_from_browser: String::new(),
-        }
-    }
-}
 impl Audio {
     pub fn download_directory(&self) -> Result<PathBuf, String> {
         let dir = self.download_dir.as_str();
