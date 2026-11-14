@@ -21,7 +21,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 ratatui-image = { version = "8.0.2", default-features = false, features = ["crossterm"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
+souvlaki = { version = "0.9", default-features = false, features = ["use_zbus"] }
 
 [profile.release]
 lto = true
