@@ -1764,10 +1764,27 @@ fn draw_confirm(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
-const HELP: &[(&str, &str)] = &[
-    ("THIS WINDOW", "#"),
-    ("j k  PgUp PgDn", "scroll"),
-    ("q  Esc  ?", "close"),
+type HelpEntries = &'static [(&'static str, &'static str)];
+
+const HELP_START: HelpEntries = &[
+    ("QUICK START", "#"),
+    ("/", "search for songs, albums or playlists"),
+    ("Enter", "play the selected row"),
+    ("Space", "pause / resume"),
+    ("a", "add the selected song to the queue"),
+    ("G", "open the song menu"),
+    (":", "command palette (see the Commands page)"),
+    ("?", "open this help"),
+    ("q", "quit"),
+    ("HELP PAGES", "#"),
+    ("→ l Tab  / ← h S-Tab", "next / previous page"),
+    ("1 - 6", "jump straight to a page"),
+    ("j k  PgUp PgDn", "scroll a long page"),
+    ("g  G", "top / bottom of the page"),
+    ("q  Esc  ?  Enter", "close help"),
+];
+
+const HELP_NAV: HelpEntries = &[
     ("NAVIGATION", "#"),
     ("j k / ↓ ↑", "move (counts work: 5j)"),
     ("gg  ge  Home  End", "top / bottom (5gg or 5ge → row 5)"),
@@ -1778,6 +1795,9 @@ const HELP: &[(&str, &str)] = &[
         "gr  gq  gp  gh  gm",
         "jump to Results / Queue / Playlists / Recent / Most Played",
     ),
+];
+
+const HELP_PLAY: HelpEntries = &[
     ("PLAYBACK", "#"),
     (
         "Enter",
@@ -1808,6 +1828,19 @@ const HELP: &[(&str, &str)] = &[
         "gs  or  :similar",
         "radio: load songs similar to the selected one and start playing them",
     ),
+];
+
+const HELP_LIBRARY: HelpEntries = &[
+    ("QUEUE", "#"),
+    ("a  A  P", "add selected / add all / play all results"),
+    (
+        "dd  x",
+        "remove from queue / delete playlist / delete track in a playlist",
+    ),
+    ("J K", "move queue or playlist item down / up"),
+    ("PLAYLISTS", "#"),
+    ("→ or l", "open the highlighted playlist"),
+    ("← h Esc Backspace", "back to the playlist list"),
     ("DOWNLOADS", "#"),
     ("D", "download the current song to audio.download_dir"),
     ("gd", "download the highlighted song"),
@@ -1823,6 +1856,9 @@ const HELP: &[(&str, &str)] = &[
         "d in album picker",
         "download the whole album or playlist; Enter opens it to choose one song",
     ),
+];
+
+const HELP_MENU: HelpEntries = &[
     ("SONG MENU  ( G )", "#"),
     ("G", "menu for the highlighted song or playlist"),
     ("j k  ⏎", "move / choose (the yellow letter is a shortcut)"),
@@ -1832,16 +1868,9 @@ const HELP: &[(&str, &str)] = &[
     ),
     ("x i", "remove · song info"),
     ("Esc  q  G", "close (Esc goes back from a sub-menu)"),
-    ("QUEUE", "#"),
-    ("a  A  P", "add selected / add all / play all results"),
-    (
-        "dd  x",
-        "remove from queue / delete playlist / delete track in a playlist",
-    ),
-    ("J K", "move queue or playlist item down / up"),
-    ("PLAYLISTS", "#"),
-    ("→ or l", "open the highlighted playlist"),
-    ("← h Esc Backspace", "back to the playlist list"),
+];
+
+const HELP_CMDS: HelpEntries = &[
     ("COMMANDS  ( : or / )", "#"),
     (
         ":search \"q\"",
@@ -1882,6 +1911,19 @@ const HELP: &[(&str, &str)] = &[
     (":quit  (or q, Ctrl-c)", ""),
 ];
 
+const HELP_PAGES: &[(&str, HelpEntries)] = &[
+    ("Start", HELP_START),
+    ("Navigate", HELP_NAV),
+    ("Playback", HELP_PLAY),
+    ("Library", HELP_LIBRARY),
+    ("Menus", HELP_MENU),
+    ("Commands", HELP_CMDS),
+];
+
+pub fn help_page_count() -> usize {
+    HELP_PAGES.len()
+}
+
 const HELP_KEY_W: usize = 24;
 
 fn wrap_words(text: &str, width: usize) -> Vec<String> {
@@ -1904,18 +1946,21 @@ fn wrap_words(text: &str, width: usize) -> Vec<String> {
     out
 }
 
-fn help_lines(inner_w: usize, accent: Color) -> Vec<Line<'static>> {
+fn help_lines(entries: HelpEntries, inner_w: usize, accent: Color) -> Vec<Line<'static>> {
     let key_w = HELP_KEY_W.min(inner_w / 2).max(1);
     let desc_w = inner_w.saturating_sub(key_w);
-    let key_style = Style::new().fg(accent);
+    let key_style = Style::new().fg(accent).add_modifier(Modifier::BOLD);
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    for (k, d) in HELP {
+    for (k, d) in entries {
         if *d == "#" {
             if !lines.is_empty() {
                 lines.push(Line::raw(""));
             }
-            lines.push(Line::styled(k.to_string(), header_style()));
+            lines.push(Line::from(vec![
+                Span::styled("▎ ", Style::new().fg(accent)),
+                Span::styled(k.to_string(), header_style()),
+            ]));
             continue;
         }
         let mut desc = wrap_words(d, desc_w).into_iter();
@@ -2040,10 +2085,37 @@ fn draw_collection_picker(f: &mut Frame, app: &App, area: Rect) {
     );
 }
 
+fn help_tab_bar(page: usize, width: usize, accent: Color) -> Line<'static> {
+    let label = |i: usize, title: &str| format!(" {} {title} ", i + 1);
+    let full: usize = HELP_PAGES
+        .iter()
+        .enumerate()
+        .map(|(i, (title, _))| label(i, title).chars().count() + 1)
+        .sum();
+    let compact = full > width;
+
+    let mut spans = Vec::new();
+    for (i, (title, _)) in HELP_PAGES.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+        spans.push(if i == page {
+            Span::styled(
+                label(i, title),
+                Style::new().fg(Color::Black).bg(accent).bold(),
+            )
+        } else if compact {
+            Span::styled(format!(" {} ", i + 1), dim())
+        } else {
+            Span::styled(label(i, title), dim())
+        });
+    }
+    Line::from(spans)
+}
+
 fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
-    let w = area.width.min(80);
-    let lines = help_lines(w.saturating_sub(2) as usize, app.accent);
-    let h = (lines.len() as u16).saturating_add(2).min(area.height);
+    let w = area.width.min(84);
+    let h = area.height.min(26);
     let popup = Rect {
         x: area.x + (area.width - w) / 2,
         y: area.y + (area.height - h) / 2,
@@ -2051,27 +2123,68 @@ fn draw_help(f: &mut Frame, app: &mut App, area: Rect) {
         height: h,
     };
 
-    let visible = h.saturating_sub(2) as usize;
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(" Help ")
+        .border_style(Style::new().fg(Color::Yellow));
+    let inner = block.inner(popup);
+    f.render_widget(Clear, popup);
+    f.render_widget(block, popup);
+    if inner.height < 4 || inner.width < 10 {
+        return;
+    }
+
+    let [tabs, rule, content, footer] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+    let pad = Margin::new(1, 0);
+    let (tabs, content, footer) = (tabs.inner(pad), content.inner(pad), footer.inner(pad));
+
+    let page = app.help_page;
+    let lines = help_lines(HELP_PAGES[page].1, content.width as usize, app.accent);
+    let visible = content.height as usize;
     let max_scroll = lines.len().saturating_sub(visible);
     app.help_scroll = app.help_scroll.min(max_scroll);
     let scroll = app.help_scroll;
 
-    let mut block = Block::bordered()
-        .title(" Help — q or Esc to close ")
-        .border_style(Style::new().fg(Color::Yellow));
-    if max_scroll > 0 {
-        let end = (scroll + visible).min(lines.len());
-        block = block.title_bottom(format!(
-            " j/k scroll · {}-{} of {} ",
-            scroll + 1,
-            end,
-            lines.len()
-        ));
-    }
+    let up = if scroll > 0 { "▲" } else { " " };
+    let down = if scroll < max_scroll { "▼" } else { " " };
+    let [left, right] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(2)]).areas(footer);
 
-    let shown: Vec<Line> = lines.into_iter().skip(scroll).take(visible).collect();
-    f.render_widget(Clear, popup);
-    f.render_widget(Paragraph::new(shown).block(block), popup);
+    f.render_widget(
+        Paragraph::new(help_tab_bar(page, tabs.width as usize, app.accent)),
+        tabs,
+    );
+    f.render_widget(
+        Paragraph::new(Line::styled("─".repeat(rule.width as usize), dim())),
+        rule,
+    );
+    f.render_widget(
+        Paragraph::new(
+            lines
+                .into_iter()
+                .skip(scroll)
+                .take(visible)
+                .collect::<Vec<_>>(),
+        ),
+        content,
+    );
+    f.render_widget(
+        Paragraph::new(Line::styled(
+            format!("←/→ page {}/{} · q close", page + 1, HELP_PAGES.len()),
+            dim(),
+        )),
+        left,
+    );
+    f.render_widget(
+        Paragraph::new(Line::styled(format!("{up}{down}"), dim())),
+        right,
+    );
 }
 
 #[cfg(test)]
@@ -2322,7 +2435,11 @@ mod tests {
         key(&mut app, KeyCode::Char('?'));
         term.draw(|f| draw(f, &mut app)).unwrap();
         let s = text(&term);
-        assert!(s.contains("THIS WINDOW") && !s.contains(":quit"));
+        assert!(s.contains("QUICK START") && !s.contains(":quit"));
+        key(&mut app, KeyCode::Char('6'));
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let s = text(&term);
+        assert!(s.contains(":search") && !s.contains(":quit"));
         key(&mut app, KeyCode::Char('G'));
         term.draw(|f| draw(f, &mut app)).unwrap();
         assert!(text(&term).contains(":quit"));

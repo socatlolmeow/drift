@@ -261,6 +261,7 @@ pub struct App {
     pub pick_title: String,
     pub pending_delete: Option<String>,
     pub help_scroll: usize,
+    pub help_page: usize,
     pub lyrics: LyricsState,
     pub lyrics_panel: bool,
     pub lyrics_scroll: usize,
@@ -376,6 +377,7 @@ impl App {
             pick_title: String::new(),
             pending_delete: None,
             help_scroll: 0,
+            help_page: 0,
             lyrics: LyricsState::Idle,
             lyrics_panel: false,
             lyrics_scroll: 0,
@@ -1097,6 +1099,7 @@ impl App {
 
     fn open_help(&mut self) {
         self.help_scroll = 0;
+        self.help_page = 0;
         self.mode = Mode::Help;
     }
 
@@ -1188,6 +1191,18 @@ impl App {
         });
     }
 
+    fn help_goto(&mut self, page: usize) {
+        if page < crate::ui::help_page_count() {
+            self.help_page = page;
+            self.help_scroll = 0;
+        }
+    }
+
+    fn help_turn(&mut self, step: isize) {
+        let count = crate::ui::help_page_count() as isize;
+        self.help_goto((self.help_page as isize + step).rem_euclid(count) as usize);
+    }
+
     fn key_help(&mut self, key: KeyEvent) {
         let ctrl = is_ctrl(&key);
         let s = self.help_scroll;
@@ -1195,6 +1210,9 @@ impl App {
             KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') | KeyCode::Enter => {
                 self.mode = Mode::Normal
             }
+            KeyCode::Tab | KeyCode::Right | KeyCode::Char('l') => self.help_turn(1),
+            KeyCode::BackTab | KeyCode::Left | KeyCode::Char('h') => self.help_turn(-1),
+            KeyCode::Char(c @ '1'..='9') => self.help_goto(c as usize - '1' as usize),
             KeyCode::Char('j') | KeyCode::Down => self.help_scroll = s.saturating_add(1),
             KeyCode::Char('k') | KeyCode::Up => self.help_scroll = s.saturating_sub(1),
             KeyCode::Char('d') if ctrl => self.help_scroll = s.saturating_add(10),
