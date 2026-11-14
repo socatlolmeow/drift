@@ -1,6 +1,6 @@
 [package]
 name = "drift"
-version = "0.1.0"
+version = "1.6.0"
 edition = "2021"
 description = "A Vim-style terminal music player for YouTube Music (no login required)"
 license = "GPL-3.0-or-later"
