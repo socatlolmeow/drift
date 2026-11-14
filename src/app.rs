@@ -66,7 +66,7 @@ pub enum AppEvent {
     },
     Stream {
         id: String,
-        result: Result<String, String>,
+        result: Result<player::Stream, String>,
     },
 }
 
@@ -2159,6 +2159,8 @@ impl App {
 
     fn load_track(&mut self, id: &str, duration: Option<u32>) {
         self.want = Some(id.to_string());
+        /* boot mpv while the stream URL resolves */
+        let _ = self.ensure_player();
         match player::cached_audio(id) {
             Some(path) => self.on_audio(id.to_string(), Ok(path)),
             None if self.audio.should_download(duration) => self.fetch_audio(id),
@@ -2181,7 +2183,7 @@ impl App {
         });
     }
 
-    fn on_stream(&mut self, id: String, result: Result<String, String>) {
+    fn on_stream(&mut self, id: String, result: Result<player::Stream, String>) {
         if self.resolving.as_deref() == Some(id.as_str()) {
             self.resolving = None;
         }
@@ -2190,8 +2192,10 @@ impl App {
         }
         self.want = None;
         match result {
-            Ok(url) => {
-                if let Err(e) = self.with_player(|p| p.load(&url)) {
+            Ok(stream) => {
+                if let Err(e) =
+                    self.with_player(|p| p.load_with_agent(&stream.url, stream.user_agent))
+                {
                     self.play_state = PlayState::Stopped;
                     self.error(format!("Playback failed: {e:#}"));
                 }
@@ -2227,11 +2231,12 @@ impl App {
         let Some(next) = self.current.and_then(|c| self.queue.get(c + 1)) else {
             return;
         };
-        /* streamed tracks (the default, or too long to download) aren't prefetched */
+        let id = next.id.clone();
         if !self.audio.should_download(next.duration) {
+            let audio = self.audio.clone();
+            std::thread::spawn(move || player::warm_stream(&id, &audio));
             return;
         }
-        let id = next.id.clone();
         if player::cached_audio(&id).is_none() {
             self.fetch_audio(&id);
         }

@@ -1,6 +1,8 @@
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail, Result};
@@ -274,6 +276,15 @@ impl Player {
     }
 
     pub fn load(&mut self, path: &str) -> Result<()> {
+        self.load_with_agent(path, None)
+    }
+
+    pub fn load_with_agent(&mut self, path: &str, user_agent: Option<&str>) -> Result<()> {
+        self.send(json!([
+            "set_property",
+            "user-agent",
+            user_agent.unwrap_or(MPV_DEFAULT_UA)
+        ]))?;
         self.send(json!(["set_property", "pause", false]))?;
         self.send(json!(["loadfile", path, "replace"]))
     }
@@ -467,21 +478,114 @@ pub fn fetch_audio(id: &str, audio: &Audio) -> Result<PathBuf, String> {
         .unwrap_or_else(|| "yt-dlp downloaded nothing".into()))
 }
 
-/// Ask yt-dlp for the direct media URL so mpv can start playing right away
-/// instead of waiting for the whole file to download.
-pub fn resolve_stream(id: &str, audio: &Audio) -> Result<String, String> {
-    let mut cmd = ytdlp(audio);
-    cmd.args([
-        "-f",
-        "bestaudio/best",
-        "--no-playlist",
-        "--no-warnings",
-        "-O",
-        "%(available_at|0)s",
-        "-g",
-    ])
-    .arg(format!("https://music.youtube.com/watch?v={id}"))
-    .stdin(Stdio::null());
+const MPV_DEFAULT_UA: &str = "libmpv";
+const VISION_CLIENT: &str = "visionos";
+const VISION_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15";
+const URL_TTL: Duration = Duration::from_secs(4 * 3600);
+const CACHE_CAPACITY: usize = 64;
+
+/// A network stream mpv can play, with the User-Agent its URL was issued to.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stream {
+    pub url: String,
+    pub user_agent: Option<&'static str>,
+}
+
+type UrlCache = Mutex<HashMap<String, (Stream, Instant)>>;
+
+fn url_cache() -> &'static UrlCache {
+    static CACHE: OnceLock<UrlCache> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn cache_get(id: &str) -> Option<Stream> {
+    let cache = url_cache().lock().ok()?;
+    let (stream, expires) = cache.get(id)?;
+    (Instant::now() < *expires).then(|| stream.clone())
+}
+
+fn cache_put(id: &str, stream: Stream, ttl: Duration) {
+    if let Ok(mut cache) = url_cache().lock() {
+        let now = Instant::now();
+        if cache.len() >= CACHE_CAPACITY {
+            cache.retain(|_, (_, expires)| now < *expires);
+        }
+        cache.insert(id.to_string(), (stream, now + ttl));
+    }
+}
+
+fn inflight() -> &'static Mutex<HashSet<String>> {
+    static SET: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Claims `id` while a thread resolves it, so concurrent requests wait instead.
+struct Inflight(String);
+
+impl Inflight {
+    fn begin(id: &str) -> Option<Inflight> {
+        let mut set = inflight().lock().ok()?;
+        set.insert(id.to_string()).then(|| Inflight(id.to_string()))
+    }
+}
+
+impl Drop for Inflight {
+    fn drop(&mut self) {
+        if let Ok(mut set) = inflight().lock() {
+            set.remove(&self.0);
+        }
+    }
+}
+
+/// Resolve a playable stream for `id`, reusing a cached URL or an in-flight
+/// resolve (e.g. the prefetcher's) when there is one.
+pub fn resolve_stream(id: &str, audio: &Audio) -> Result<Stream, String> {
+    let started = Instant::now();
+    loop {
+        if let Some(stream) = cache_get(id) {
+            return Ok(stream);
+        }
+        if let Some(_claim) = Inflight::begin(id) {
+            let stream = resolve_uncached(id, audio)?;
+            cache_put(id, stream.clone(), URL_TTL);
+            return Ok(stream);
+        }
+        if started.elapsed() > Duration::from_secs(60) {
+            return Err("timed out waiting for stream".into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Resolve `id` into the cache ahead of time. Errors are left for the real play to report.
+pub fn warm_stream(id: &str, audio: &Audio) {
+    if cache_get(id).is_none() {
+        let _ = resolve_stream(id, audio);
+    }
+}
+
+/// yt-dlp's `visionos` client needs no JS challenge and carries no pre-roll
+/// ad, so it avoids the `available_at` wait of the default clients.
+fn resolve_uncached(id: &str, audio: &Audio) -> Result<Stream, String> {
+    let clients = match audio.stream_client() {
+        Some(client) => vec![Some(client)],
+        None => vec![Some(VISION_CLIENT), None],
+    };
+    let mut last = String::from("yt-dlp did not run");
+    for client in clients {
+        match ytdlp_stream(id, audio, client) {
+            Ok(url) => {
+                let user_agent = (client == Some(VISION_CLIENT)).then_some(VISION_UA);
+                return Ok(Stream { url, user_agent });
+            }
+            Err(e) => last = e,
+        }
+    }
+    Err(last)
+}
+
+fn ytdlp_stream(id: &str, audio: &Audio, client: Option<&str>) -> Result<String, String> {
+    let mut cmd = stream_command(id, audio, client);
     crate::sys::no_window(&mut cmd);
     let out = cmd
         .output()
@@ -506,6 +610,26 @@ pub fn resolve_stream(id: &str, audio: &Audio) -> Result<String, String> {
         .find_map(|l| l.strip_prefix("ERROR: "))
         .map(ytdl_reason)
         .unwrap_or_else(|| "yt-dlp returned no stream URL".into()))
+}
+
+fn stream_command(id: &str, audio: &Audio, client: Option<&str>) -> Command {
+    let mut cmd = ytdlp(audio);
+    if let Some(client) = client {
+        cmd.arg("--extractor-args")
+            .arg(format!("youtube:player_client={client}"));
+    }
+    cmd.args([
+        "-f",
+        "bestaudio/best",
+        "--no-playlist",
+        "--no-warnings",
+        "-O",
+        "%(available_at|0)s",
+        "-g",
+    ])
+    .arg(format!("https://music.youtube.com/watch?v={id}"))
+    .stdin(Stdio::null());
+    cmd
 }
 
 fn wait_until(at: u64, now: SystemTime) -> Duration {
@@ -585,6 +709,24 @@ mod tests {
             album: None,
             duration: None,
         }
+    }
+
+    #[test]
+    fn stream_client_argument() {
+        let args = |audio: &Audio| -> Vec<String> {
+            stream_command("abc", audio, audio.stream_client())
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert!(!args(&Audio::default()).contains(&"--extractor-args".to_string()));
+        let audio = Audio {
+            stream_client: " android_vr ".into(),
+            ..Audio::default()
+        };
+        let args = args(&audio);
+        let i = args.iter().position(|a| a == "--extractor-args").unwrap();
+        assert_eq!(args[i + 1], "youtube:player_client=android_vr");
     }
 
     #[test]
@@ -679,6 +821,36 @@ mod tests {
         assert!(!dir.exists());
         track.id = "_-abcDEF012".into();
         assert!(download_command(&track, &Audio::default(), &dir).is_ok());
+    }
+
+    #[test]
+    fn url_cache_honours_ttl() {
+        let stream = Stream {
+            url: "http://x".into(),
+            user_agent: None,
+        };
+        cache_put("cache-test-live", stream.clone(), Duration::from_secs(60));
+        cache_put("cache-test-dead", stream.clone(), Duration::ZERO);
+        assert_eq!(cache_get("cache-test-live"), Some(stream));
+        assert_eq!(cache_get("cache-test-dead"), None);
+        assert_eq!(cache_get("cache-test-missing"), None);
+    }
+
+    #[test]
+    fn inflight_claim_is_exclusive() {
+        let first = Inflight::begin("inflight-test").expect("first claim");
+        assert!(Inflight::begin("inflight-test").is_none());
+        drop(first);
+        assert!(Inflight::begin("inflight-test").is_some());
+    }
+
+    #[test]
+    fn explicit_stream_client_overrides_default() {
+        let args: Vec<String> = stream_command("abc", &Audio::default(), Some(VISION_CLIENT))
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(args.contains(&"youtube:player_client=visionos".to_string()));
     }
 
     #[test]

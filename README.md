@@ -52,7 +52,7 @@ Search, queue and play music with no account, no login and no browser.
 - A command palette (`:search`, `:seek`, `:vol`, `:import` and more) with completion and history
 - Your queue and position are restored the next time you start Drift
 - Media keys and `playerctl` on Linux (MPRIS), plus optional Discord rich presence
-- One TOML file for volume, seek step, shuffle/repeat defaults, accent color and custom keybinds
+- One TOML file for volume, seek step, shuffle/repeat defaults, accent color and custom keybinds, custom audio streaming options, Discord Rich Presence
 
 ## Installation
 
@@ -227,10 +227,11 @@ accent = "cyan"       # a color name or a hex value like "#FF8800"
 client_id = ""        # set this to enable Discord rich presence
 
 [audio]
-download = false              # false: stream songs; true: download to the cache first
-download_max_minutes = 15     # with download = true, longer songs are still streamed (0 = no limit)
-download_dir = "~/Music/drift"
-cookies_from_browser = ""     # e.g. "firefox" or "chrome"; passed to yt-dlp when YouTube blocks playback
+download = false               # false: stream songs; true: download to the cache first
+download_max_minutes = 15      # with download = true, longer songs are still streamed (0 = no limit)
+download_dir = "~/Music/drift" # The directory where songs are saved.
+cookies_from_browser = ""      # e.g. "firefox" or "chrome"; passed to yt-dlp when YouTube blocks playback
+stream_from_client = ""        # e.g "android_vr" - The client that is passed to yt-dlp used to stream the songs
 
 [keys]
 quit = "Q"
@@ -245,6 +246,7 @@ If you already have a `config.toml` from an older version, add the `[audio]` sec
 ### Streaming or downloading
 
 By default Drift streams songs, so playback starts right away, even for hour-long tracks. With `download = true` songs are cached on disk first, and the next song in the queue is fetched in the background while the current one plays.
+
 
 ### Saving songs permanently
 

@@ -92,6 +92,7 @@ pub struct Audio {
     pub download_max_minutes: u32,
     pub download_dir: String,
     pub cookies_from_browser: String,
+    pub stream_client: String,
 }
 
 #[cfg(unix)]
@@ -102,6 +103,7 @@ impl Default for Audio {
             download_max_minutes: 15,
             download_dir: "~/Music/drift".into(),
             cookies_from_browser: String::new(),
+            stream_client: String::new(),
         }
     }
 }
@@ -135,6 +137,12 @@ impl Audio {
     /// Browser name for yt-dlp's --cookies-from-browser, if one is set.
     pub fn cookies(&self) -> Option<&str> {
         let c = self.cookies_from_browser.trim();
+        (!c.is_empty()).then_some(c)
+    }
+
+    /// YouTube player client for yt-dlp when streaming, if one is set.
+    pub fn stream_client(&self) -> Option<&str> {
+        let c = self.stream_client.trim();
         (!c.is_empty()).then_some(c)
     }
 
@@ -255,11 +263,13 @@ download_dir = {download_dir}
 # Examples: \"firefox\", \"chrome\", \"chromium\", \"brave\", \"edge\",
 # \"firefox:my-profile\". Empty means off. Close the browser if reading fails.
 cookies_from_browser = \"{cookies}\"
+# The streaming client yt-dlp uses to fetch audio URLS.
+stream_client = \"{stream_client}\"
 
 [keys]
 # Remap keys here. Each line sets an action to one key or a list of keys and
 # replaces that action's default keys. Everything you leave out keeps its vim
-# default. See the README for the list of actions.
+# default. See README for the list of actions.
 # Write keys as a character (\"x\", \"G\"), a name (space, enter, esc, tab, backtab,
 # backspace, delete, home, end, pageup, pagedown, up, down, left, right, f1-f12),
 # ctrl+key (\"ctrl+d\") or a sequence (\"gg\", \"ctrl+x g\"). An empty list unbinds.
@@ -282,6 +292,7 @@ cookies_from_browser = \"{cookies}\"
             dl_max = au.download_max_minutes,
             download_dir = toml::Value::String(au.download_dir.clone()),
             cookies = au.cookies_from_browser.replace(['\\', '"'], ""),
+            stream_client = au.stream_client.replace(['\\', '"'], ""),
         )
     }
 
@@ -508,11 +519,13 @@ mod tests {
         let c: Config = toml::from_str("").unwrap();
         assert!(!c.audio.download);
         assert_eq!(c.audio.cookies(), None);
+        assert_eq!(c.audio.stream_client(), None);
         let c: Config = toml::from_str(
-            "[audio]\ndownload = true\ndownload_max_minutes = 10\ncookies_from_browser = \" firefox \"",
+            "[audio]\ndownload = true\ndownload_max_minutes = 10\ncookies_from_browser = \" firefox \"\nstream_client = \" android_vr \"",
         )
         .unwrap();
         assert_eq!(c.audio.cookies(), Some("firefox"));
+        assert_eq!(c.audio.stream_client(), Some("android_vr"));
         assert!(c.audio.should_download(Some(600)));
         assert!(!c.audio.should_download(Some(601)));
         assert!(!c.audio.should_download(None));
@@ -586,6 +599,7 @@ mod tests {
             download: true,
             download_max_minutes: 30,
             cookies_from_browser: "chrome".into(),
+            stream_client: "android_vr".into(),
             ..Audio::default()
         };
         let text = Config::render(
@@ -599,5 +613,6 @@ mod tests {
         assert!(c.audio.download);
         assert_eq!(c.audio.download_max_minutes, 30);
         assert_eq!(c.audio.cookies(), Some("chrome"));
+        assert_eq!(c.audio.stream_client(), Some("android_vr"));
     }
 }
