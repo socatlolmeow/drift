@@ -65,7 +65,7 @@ mod ipc {
     /// `WriteFile` on a clone of that handle, which would deadlock the player.
     /// So we poll with `PeekNamedPipe` and only read when data is waiting.
     pub struct Reader(File);
-    
+
     impl Read for Reader {
         fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
             if buf.is_empty() {
