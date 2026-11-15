@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn creates_both_graphics_protocols() {
         for protocol in [ProtocolType::Kitty, ProtocolType::Iterm2] {
-            let mut picker = ratatui_image::picker::Picker::from_fontsize((10, 20));
+            let mut picker = ratatui_image::picker::Picker::halfblocks();
             picker.set_protocol_type(protocol);
             let image = image::RgbImage::from_pixel(16, 16, image::Rgb([255, 0, 0]));
             let state = picker.new_resize_protocol(image.into());
