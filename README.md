@@ -30,6 +30,7 @@ Search, queue and play music with no account, no login and no browser.
 - [Keybinds](#keybinds)
 - [Commands](#commands)
 - [Lyrics](#lyrics)
+- [MPRIS and playerctl](#mpris-and-playerctl)
 - [Configuration](#configuration)
   - [Streaming or downloading](#streaming-or-downloading)
   - [Discord rich presence](#discord-rich-presence)
@@ -202,6 +203,14 @@ Both fullscreen views keep playback controls available: `Space` to pause or resu
 Lyrics come from [LRCLIB](https://lrclib.net) and are only fetched while the panel or fullscreen view is open.
 
 Artwork comes from YouTube thumbnails and is only fetched when the cover view is open. Drift trims black bars and crops and resizes the image to 1000 × 1000 pixels. Terminals detected as supporting the Kitty or iTerm2 graphics protocol show the image directly; other terminals use colored half blocks for a rough preview. The cover is hidden in very short windows to leave room for track details.
+
+## MPRIS and playerctl
+
+Drift registers as an MPRIS player on Linux, so your current song can appear in Waybar, your desktop's media controls and anything else that speaks MPRIS, and you can control playback with `playerctl` and your media keys.
+
+A step-by-step guide covers setup for Waybar and other status bars, media key bindings and troubleshooting.
+
+[![Read the MPRIS guide](https://img.shields.io/badge/Read%20the%20guide-MPRIS%20%26%20Waybar-blue?style=for-the-badge&logo=readthedocs&logoColor=white)](docs/mpris.md)
 
 ## Configuration
 
