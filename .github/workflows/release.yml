@@ -5,7 +5,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -54,11 +54,34 @@ jobs:
     name: Publish release
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
+
+      - name: Build release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > changelog_section.md
+          [ -s changelog_section.md ] || { echo "No CHANGELOG entry for $version"; exit 1; }
+
+          gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" \
+            --jq .body > generated.md
+
+          { cat changelog_section.md; printf '\n\n---\n\n'; cat generated.md; } > notes.md
 
       - name: Create GitHub release
         env:
@@ -67,4 +90,5 @@ jobs:
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
-            --generate-notes
+            --notes-file notes.md \
+            --draft
