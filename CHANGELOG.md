@@ -1,27 +1,26 @@
 # Changelog
 
-Changes to drift. Loosely follows [Keep A Changelog](https://keepachangelog.com/en/1.0.0/).
+All notable changes to this project are documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [1.7.0] - 2026-11-15
 
 ### Added
 
-- Download support for saving songs permanently to disk
-  - Press `D` to download current song, `gd` for highlighted, `gD` for all in collection
-  - Commands: `:download`, `:download selected`, `:download all` (alias `:dl`)
-  - Configure save location with `download_dir` under `[audio]` in config.toml (default: `~/Music/drift`)
-  - Background downloads with progress tracking and completion summary
-  - Deduplication within batch, fails don't stop remaining downloads
-  - Files saved in original audio format without transcoding
-  - Configurable key bindings: `download`, `download_selected`, `download_all`
+- Tabbed help menu with six pages (Start, Navigate, Playback, Library, Menus,
+  Commands). Switch pages with `←`/`→`, `h`/`l`, `Tab` or `1`-`6`; `j`/`k` still scroll. (#19)
+- MPRIS documentation and setup guide. (#22)
+- Config options are now documented in the README.
 
-- Enhanced fullscreen lyrics and cover art display
-  - Current line now bold white text on dark neutral band
-  - Extra breathing room around current line with surrounding lines fading
-  - Consistent styling across both fullscreen views
+### Changed
 
-- Playlist pagination support
-  - Browse collections beyond 50-item limit (tested up to 400+ tracks)
-  - Proper continuation token handling and repetition detection
- 
-# New Contributors
-- [@pnlt](https://github.com/pnlt) in [#6](https://github.com/socatlolmeow/drift/pull/6).
- 
+- Tracks start playing much faster. Resolving a song used to take around 4-6s. (#20)
+  - Streams are resolved with yt-dlp's `visionos` client, which is faster at the same quality.
+  - Resolved URLs are cached for 4 hours.
+  - The next queued track is resolved while the current one plays.
+  - `mpv` is spawned as soon as a track is requested, not after resolving finishes.
+- Updated dependencies: ratatui 0.30.2 (#23), dirs 7.0.0, souvlaki 0.9.3.
