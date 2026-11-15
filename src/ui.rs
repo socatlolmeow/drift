@@ -1,5 +1,5 @@
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, Wrap};
 use ratatui::Frame;
@@ -2273,7 +2273,7 @@ mod tests {
         assert!(!text(&term).contains("Cover art unavailable"));
         app.cover_thumb = None;
 
-        let mut picker = ratatui_image::picker::Picker::from_fontsize((10, 20));
+        let mut picker = ratatui_image::picker::Picker::halfblocks();
         picker.set_protocol_type(ratatui_image::picker::ProtocolType::Kitty);
         app.set_image_picker(picker);
         app.on_event(crate::app::AppEvent::Cover {
