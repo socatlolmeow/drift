@@ -47,6 +47,7 @@ pub enum Command {
     Append(String),
     DeletePlaylist(String),
     AddTo(String),
+    Like(bool),
     Import(String),
     Artist,
     Similar,
@@ -88,6 +89,8 @@ pub const COMMAND_NAMES: &[&str] = &[
     "append",
     "delpl",
     "addto",
+    "like",
+    "unlike",
     "import",
     "artist",
     "similar",
@@ -205,6 +208,8 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
         "append" => Append(name_arg(arg, "append")?),
         "delpl" | "deletepl" | "delete" => DeletePlaylist(name_arg(arg, "delpl")?),
         "addto" => AddTo(name_arg(arg, "addto")?),
+        "like" | "love" => Like(true),
+        "unlike" => Like(false),
         "import" => {
             if arg.is_empty() {
                 return Err("usage: :import <youtube / youtube music playlist URL>".into());
@@ -316,6 +321,14 @@ mod tests {
         assert_eq!(parse("playlists"), Ok(Some(Command::ShowPlaylists)));
         assert_eq!(parse("history"), Ok(Some(Command::ShowRecent)));
         assert_eq!(parse("mostplayed"), Ok(Some(Command::ShowMostPlayed)));
+    }
+
+    #[test]
+    fn like_commands() {
+        assert_eq!(parse("like"), Ok(Some(Command::Like(true))));
+        assert_eq!(parse(":love"), Ok(Some(Command::Like(true))));
+        assert_eq!(parse("unlike"), Ok(Some(Command::Like(false))));
+        assert!(COMMAND_NAMES.contains(&"like") && COMMAND_NAMES.contains(&"unlike"));
     }
 
     #[test]

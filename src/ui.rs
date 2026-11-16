@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -7,6 +9,7 @@ use ratatui::Frame;
 use crate::app::{App, Level, LyricsState, MenuAction, Mode, PlayState, SearchKind, View, NO_KEY};
 use crate::lyrics::Lyrics;
 use crate::model::{fmt_time, Track};
+use crate::store::LIKED_SONGS;
 use ratatui_image::{Resize, StatefulImage};
 
 /* The three ways lyrics get drawn: the side panel, centered fullscreen, and
@@ -22,6 +25,7 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 
 /* Cursor row: accent-colored bold text plus a bar, no filled background. */
 const CURSOR: &str = "▎";
+const HEART: &str = "♥";
 const LYRIC_HIGHLIGHT_BG: Color = Color::Rgb(30, 30, 30);
 
 fn selected_style(accent: Color) -> Style {
@@ -34,6 +38,10 @@ fn cursor_text(text: &str) -> String {
         Some(rest) => format!("{CURSOR}{rest}"),
         None => text.to_string(),
     }
+}
+
+fn liked_style() -> Style {
+    Style::new().fg(Color::Red)
 }
 
 fn header_style() -> Style {
@@ -216,10 +224,19 @@ fn playing_marker(app: &App) -> Option<(String, &'static str)> {
     Some((id, marker))
 }
 
+fn heart_cell(liked: &HashSet<&str>, id: &str) -> Cell<'static> {
+    if liked.contains(id) {
+        Cell::from(HEART).style(liked_style())
+    } else {
+        Cell::from("")
+    }
+}
+
 fn track_rows<'a>(
     tracks: &'a [Track],
     playing: Option<(&str, &'a str)>,
     show_album: bool,
+    liked: &HashSet<&str>,
 ) -> Vec<Row<'a>> {
     tracks
         .iter()
@@ -233,6 +250,7 @@ fn track_rows<'a>(
             };
             let mut cells = vec![
                 Cell::from(marker),
+                heart_cell(liked, &t.id),
                 Cell::from(format!("{:>3}", i + 1)).style(dim()),
                 Cell::from(t.title.as_str()),
                 Cell::from(t.artist.as_str()),
@@ -259,8 +277,9 @@ fn track_table<'a>(
     block: Block<'a>,
     accent: Color,
 ) -> Table<'a> {
-    let mut header = vec!["", "  #", "Title", "Artist"];
+    let mut header = vec!["", "", "  #", "Title", "Artist"];
     let mut widths = vec![
+        Constraint::Length(2),
         Constraint::Length(2),
         Constraint::Length(4),
         Constraint::Fill(3),
@@ -342,7 +361,8 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
         };
         return empty_hint(f, block, area, hint);
     }
-    let rows = track_rows(tracks, playing, show_album);
+    let liked = app.store.liked_ids();
+    let rows = track_rows(tracks, playing, show_album, &liked);
     let table = track_table(rows, show_album, block, app.accent);
     let idx = view.idx();
     f.render_stateful_widget(table, area, &mut app.states[idx]);
@@ -464,6 +484,7 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect, most_played: bool) {
     let show_album = area.width >= 88;
     let now = playing_marker(app);
     let playing = now.as_ref().map(|(id, marker)| (id.as_str(), *marker));
+    let liked = app.store.liked_ids();
     let mut rows = Vec::with_capacity(entries.len());
     for (i, entry) in entries.iter().enumerate() {
         let track = &entry.track;
@@ -475,6 +496,7 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect, most_played: bool) {
         };
         let mut cells = vec![
             Cell::from(marker),
+            heart_cell(&liked, &track.id),
             Cell::from(format!("{:>3}", i + 1)).style(dim()),
             Cell::from(track.title.as_str()),
             Cell::from(track.artist.as_str()),
@@ -493,8 +515,9 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect, most_played: bool) {
             row
         });
     }
-    let mut header = vec!["", "  #", "Title", "Artist"];
+    let mut header = vec!["", "", "  #", "Title", "Artist"];
     let mut widths = vec![
+        Constraint::Length(2),
         Constraint::Length(2),
         Constraint::Length(4),
         Constraint::Fill(3),
@@ -558,7 +581,8 @@ fn draw_open_playlist(f: &mut Frame, app: &mut App, area: Rect, name: &str) {
         );
     }
     let show_album = area.width >= 76;
-    let rows = track_rows(tracks, playing, show_album);
+    let liked = app.store.liked_ids();
+    let rows = track_rows(tracks, playing, show_album, &liked);
     let table = track_table(rows, show_album, block, app.accent);
     f.render_stateful_widget(table, area, &mut app.pl_state);
 }
@@ -598,16 +622,24 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let rows: Vec<Row> = app
-        .store
-        .playlists
+    let names = app.store.names();
+    let rows: Vec<Row> = names
         .iter()
         .enumerate()
-        .map(|(i, (name, tracks))| {
+        .map(|(i, &name)| {
+            let count = app.store.playlists.get(name).map_or(0, Vec::len);
+            let name_cell = if name == LIKED_SONGS {
+                Cell::from(Line::from(vec![
+                    Span::styled(format!("{HEART} "), liked_style()),
+                    Span::raw(name),
+                ]))
+            } else {
+                Cell::from(name)
+            };
             Row::new(vec![
                 Cell::from(format!("{:>2}", i + 1)).style(dim()),
-                Cell::from(name.as_str()),
-                Cell::from(format!("{}", tracks.len())).style(dim()),
+                name_cell,
+                Cell::from(count.to_string()).style(dim()),
             ])
         })
         .collect();
@@ -633,7 +665,8 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
     {
         Some(tracks) if !tracks.is_empty() => {
             let show_album = right.width >= 70;
-            let rows = track_rows(tracks, None, show_album);
+            let liked = app.store.liked_ids();
+            let rows = track_rows(tracks, None, show_album, &liked);
             f.render_widget(
                 track_table(rows, show_album, preview_block, app.accent),
                 right,
@@ -767,6 +800,9 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
             ));
             spans.push(Span::styled("  ·  ", dim()));
             spans.push(Span::styled(t.artist.clone(), Style::new().fg(app.accent)));
+            if app.store.is_liked(&t.id) {
+                spans.push(Span::styled(format!("  {HEART}"), liked_style()));
+            }
         }
         (Some(t), false) => spans.push(Span::styled(
             format!("Last played: {} — {}", t.title, t.artist),
@@ -991,8 +1027,8 @@ fn draw_cover_art(f: &mut Frame, app: &mut App, track_id: &str, art: Rect, colum
     );
 }
 
-/* Title (with the star and menu glyphs on the right) and "artist — album". */
-fn draw_track_text(f: &mut Frame, track: &Track, title_row: Rect, artist_row: Rect) {
+/* Title (with the heart and menu glyphs on the right) and "artist — album". */
+fn draw_track_text(f: &mut Frame, track: &Track, liked: bool, title_row: Rect, artist_row: Rect) {
     // skip the glyphs when there's barely any room
     let side = if title_row.width >= 16 { 6 } else { 0 };
     let [title_area, side_area] =
@@ -1005,9 +1041,17 @@ fn draw_track_text(f: &mut Frame, track: &Track, title_row: Rect, artist_row: Re
         title_area,
     );
     if side > 0 {
+        let heart = if liked {
+            Span::styled(HEART, liked_style())
+        } else {
+            Span::styled("♡", Style::new().fg(Color::Gray))
+        };
         f.render_widget(
-            Paragraph::new(Line::styled("☆  ···", Style::new().fg(Color::Gray)))
-                .alignment(Alignment::Right),
+            Paragraph::new(Line::from(vec![
+                heart,
+                Span::styled("  ···", Style::new().fg(Color::Gray)),
+            ]))
+            .alignment(Alignment::Right),
             side_area,
         );
     }
@@ -1119,8 +1163,9 @@ fn draw_cover_track(f: &mut Frame, app: &mut App, area: Rect) {
     ])
     .areas(stack);
 
+    let liked = app.store.is_liked(&track.id);
     draw_cover_art(f, app, &track.id, art, area);
-    draw_track_text(f, &track, title_row, artist_row);
+    draw_track_text(f, &track, liked, title_row, artist_row);
     draw_progress(f, app, &track, bar_row, time_row);
 }
 
@@ -1464,6 +1509,8 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("append", "append a playlist to the queue"),
     ("delpl", "delete a playlist"),
     ("addto", "add the selected track to a playlist"),
+    ("like", "add the selected song to Liked Songs"),
+    ("unlike", "remove the selected song from Liked Songs"),
     ("import", "import a YouTube / YT Music playlist URL"),
     ("artist", "songs by the selected artist"),
     ("similar", "radio: songs similar to the selected one"),
@@ -1838,6 +1885,12 @@ const HELP_LIBRARY: HelpEntries = &[
         "remove from queue / delete playlist / delete track in a playlist",
     ),
     ("J K", "move queue or playlist item down / up"),
+    ("LIKED SONGS", "#"),
+    (
+        "f  or  :like",
+        "like the highlighted (or playing) song; f again unlikes it. Liked songs get a ♥ and live in the Liked Songs playlist",
+    ),
+    (":unlike", "remove the highlighted (or playing) song from Liked Songs"),
     ("PLAYLISTS", "#"),
     ("→ or l", "open the highlighted playlist"),
     ("← h Esc Backspace", "back to the playlist list"),
@@ -1866,7 +1919,7 @@ const HELP_MENU: HelpEntries = &[
         "p n a g s b l",
         "play · next · queue · artist · similar · album · playlist",
     ),
-    ("x i", "remove · song info"),
+    ("f x i", "like · remove · song info"),
     ("Esc  q  G", "close (Esc goes back from a sub-menu)"),
 ];
 
@@ -1903,6 +1956,10 @@ const HELP_CMDS: HelpEntries = &[
         "append a playlist to the queue / delete it",
     ),
     (":addto n", "add the selected track to playlist n"),
+    (
+        ":like  :unlike",
+        "add / remove the selected song in Liked Songs",
+    ),
     (":import URL", "load a YouTube / YT Music playlist"),
     (":artist", "same as ga"),
     (":similar", "same as gs (also :radio)"),
@@ -2302,7 +2359,15 @@ mod tests {
         assert!(title_x < lyric_x && artist_x < lyric_x && artist_y > title_y);
         assert!(time_x < lyric_x && time_y > artist_y);
         assert!(text(&term).contains("0:27") && text(&term).contains("-1:03"));
-        assert!(text(&term).contains("☆"));
+        // the glyph next to the title is an empty heart until the song is liked
+        assert!(text(&term).contains("♡"));
+        let playing = app.now_track().cloned().unwrap();
+        app.store.set_liked(&playing, true);
+        term.draw(|f| draw(f, app)).unwrap();
+        assert!(text(&term).contains(HEART) && !text(&term).contains("♡"));
+        app.store.set_liked(&playing, false);
+        app.store.playlists.remove(LIKED_SONGS);
+        term.draw(|f| draw(f, app)).unwrap();
         assert!(!text(&term).contains("Now Playing"));
         assert!(!text(&term).contains("🔈") && !text(&term).contains("⏸"));
 
@@ -2355,6 +2420,49 @@ mod tests {
         press(app, KeyCode::Char('F'));
         press(app, KeyCode::Esc);
         assert!(app.mode == Mode::Normal);
+    }
+
+    #[test]
+    fn liked_songs_show_hearts() {
+        let dir = std::env::temp_dir().join(format!("drift-ui-likes-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("DRIFT_CONFIG_DIR", &dir);
+        std::env::set_var("DRIFT_STATE_DIR", &dir);
+
+        let (tx, _rx) = mpsc::channel();
+        let mut app = App::new(tx);
+        app.store.playlists.clear();
+        let t = |id: &str, title: &str| Track {
+            id: id.into(),
+            title: title.into(),
+            artist: "Someone".into(),
+            artists: Vec::new(),
+            album: None,
+            duration: Some(90),
+        };
+        app.results = vec![
+            t("aaaaaaaaaaa", "Loved Song"),
+            t("bbbbbbbbbbb", "Plain Song"),
+        ];
+        app.store.set_liked(&app.results[0], true);
+        app.store.playlists.insert("Ambient".into(), Vec::new());
+
+        let mut term = Terminal::new(TestBackend::new(100, 24)).unwrap();
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let s = text(&term);
+        assert!(s.contains("Loved Song") && s.contains("Plain Song"));
+        assert_eq!(s.matches(HEART).count(), 1);
+
+        // the Playlists tab lists Liked Songs first, with a heart
+        app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        app.on_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        term.draw(|f| draw(f, &mut app)).unwrap();
+        let s = text(&term);
+        let liked_row = s.find("Liked Songs").unwrap();
+        assert!(liked_row < s.find("Ambient").unwrap());
+        assert!(s.matches(HEART).count() >= 1);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

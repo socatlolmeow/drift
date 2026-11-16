@@ -47,6 +47,7 @@ pub enum Action {
     GoSimilar,
     GoAlbum,
     SaveAlbum,
+    Like,
     Download,
     DownloadSelected,
     DownloadAll,
@@ -97,6 +98,7 @@ const DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("go_similar", Action::GoSimilar, &["gs"]),
     ("go_album", Action::GoAlbum, &["gb"]),
     ("save_album", Action::SaveAlbum, &["gB"]),
+    ("like", Action::Like, &["f"]),
     ("download", Action::Download, &["D"]),
     ("download_selected", Action::DownloadSelected, &["gd"]),
     ("download_all", Action::DownloadAll, &["gD"]),
@@ -342,6 +344,7 @@ mod tests {
         assert_eq!(run(&map, "G"), Some(Action::Menu));
         assert_eq!(run(&map, "Q"), Some(Action::ToggleQueueSidebar));
         assert_eq!(run(&map, "space"), Some(Action::Pause));
+        assert_eq!(run(&map, "f"), Some(Action::Like));
         assert!(matches!(map.lookup(&seq("g")), Lookup::Pending));
         assert!(matches!(map.lookup(&seq("gz")), Lookup::Nothing));
     }
