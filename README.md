@@ -6,10 +6,17 @@
 
 Search, queue and play music with no account, no login and no browser.
 
-[![Stars](https://img.shields.io/github/stars/socatlolmeow/drift?style=flat-square&logo=github)](https://github.com/socatlolmeow/drift/stargazers)
-[![Build](https://img.shields.io/github/actions/workflow/status/socatlolmeow/drift/rust.yml?branch=main&style=flat-square&label=build)](https://github.com/socatlolmeow/drift/actions/workflows/rust.yml)
-[![License](https://img.shields.io/github/license/socatlolmeow/drift?style=flat-square)](LICENSE)
-![Rust](https://img.shields.io/badge/built%20with-Rust-orange?style=flat-square&logo=rust)
+[![Stars](https://img.shields.io/github/stars/socatlolmeow/drift?style=flat-square&logo=github&labelColor=191724&color=ebbcba)](https://github.com/socatlolmeow/drift/stargazers)
+[![Forks](https://img.shields.io/github/forks/socatlolmeow/drift?style=flat-square&logo=github&labelColor=191724&color=c4a7e7)](https://github.com/socatlolmeow/drift/network/members)
+[![Issues](https://img.shields.io/github/issues/socatlolmeow/drift?style=flat-square&logo=github&labelColor=191724&color=eb6f92)](https://github.com/socatlolmeow/drift/issues)
+[![Last commit](https://img.shields.io/github/last-commit/socatlolmeow/drift?style=flat-square&logo=git&logoColor=white&labelColor=191724&color=9ccfd8)](https://github.com/socatlolmeow/drift/commits/main)
+[![License](https://img.shields.io/github/license/socatlolmeow/drift?style=flat-square&labelColor=191724&color=f6c177)](LICENSE)
+
+[![Build](https://img.shields.io/github/actions/workflow/status/socatlolmeow/drift/rust.yml?branch=main&style=flat-square&label=build&logo=githubactions&logoColor=white&labelColor=191724)](https://github.com/socatlolmeow/drift/actions/workflows/rust.yml)
+[![Rust](https://img.shields.io/badge/built%20with-Rust-orange?style=flat-square&logo=rust&labelColor=191724)](https://www.rust-lang.org)
+[![AUR](https://img.shields.io/aur/version/driftmusic-git?style=flat-square&logo=archlinux&logoColor=white&label=AUR&labelColor=191724&color=1793d1)](https://aur.archlinux.org/packages/driftmusic-git)
+
+</div>
 
 <img src="https://github.com/socatlolmeow/drift/blob/main/examples/showcase.gif?raw=true" alt="Drift showcase" />
 
