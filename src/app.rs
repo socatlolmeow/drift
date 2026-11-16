@@ -14,11 +14,11 @@ use crate::download;
 use crate::history::History;
 use crate::keys::{Action, Key, Keymap, Lookup};
 use crate::lyrics::{self, Lyrics};
-use crate::model::{split_artists, Collection, RepeatMode, Track};
+use crate::model::{Collection, RepeatMode, Track};
 use crate::mpris::{Cmd, Mpris};
 use crate::player::{self, Player, PlayerEvent};
 use crate::session::Session;
-use crate::store::Store;
+use crate::store::{Store, LIKED_SONGS};
 use crate::ytmusic::{self, Kind, Page};
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
@@ -185,6 +185,7 @@ pub enum MenuAction {
     SaveAlbum,
     SaveResults,
     PlaylistMenu,
+    Like,
     PickPlaylist(String),
     NewPlaylist,
     Remove,
@@ -604,7 +605,7 @@ impl App {
     }
 
     pub fn playlist_name(&self, i: usize) -> Option<String> {
-        self.store.playlists.keys().nth(i).cloned()
+        self.store.names().get(i).map(|name| name.to_string())
     }
 
     pub fn now_track(&self) -> Option<&Track> {
@@ -743,6 +744,10 @@ impl App {
             Action::GoSimilar => self.go_similar(),
             Action::GoAlbum => self.go_album(),
             Action::SaveAlbum => self.save_album(None),
+            Action::Like => {
+                let track = self.target_track();
+                self.set_like(track, None);
+            }
             Action::Download => self.download(DownloadTarget::Current),
             Action::DownloadSelected => self.download(DownloadTarget::Selected),
             Action::DownloadAll => self.download(DownloadTarget::All),
@@ -881,6 +886,12 @@ impl App {
                 ));
             }
             items.push(menu_item('l', "Add to playlist…", MenuAction::PlaylistMenu));
+            let like = if self.store.is_liked(&track.id) {
+                "Unlike"
+            } else {
+                "Like"
+            };
+            items.push(menu_item('f', like, MenuAction::Like));
             if in_queue {
                 items.push(menu_item('x', "Remove from queue", MenuAction::Remove));
             } else if self.in_playlist() {
@@ -937,10 +948,11 @@ impl App {
         let track = self.menu_track.clone();
         let mut items: Vec<MenuItem> = self
             .store
-            .playlists
-            .iter()
+            .names()
+            .into_iter()
             .enumerate()
-            .map(|(i, (name, list))| {
+            .map(|(i, name)| {
+                let list = &self.store.playlists[name];
                 let has = track
                     .as_ref()
                     .is_some_and(|t| list.iter().any(|x| x.id == t.id));
@@ -950,13 +962,13 @@ impl App {
                     } else {
                         NO_KEY
                     },
-                    label: name.clone(),
+                    label: name.to_string(),
                     detail: if has {
                         "✓ already in it".to_string()
                     } else {
                         format!("{} songs", list.len())
                     },
-                    action: MenuAction::PickPlaylist(name.clone()),
+                    action: MenuAction::PickPlaylist(name.to_string()),
                 }
             })
             .collect();
@@ -1046,6 +1058,7 @@ impl App {
             }
             MenuAction::SaveResults => self.prefill_command("saveresults "),
             MenuAction::PlaylistMenu => {}
+            MenuAction::Like => self.set_like(track, None),
             MenuAction::PickPlaylist(name) => self.add_to_playlist(&name),
             MenuAction::NewPlaylist => self.prefill_command("addto "),
             MenuAction::Remove | MenuAction::DeletePlaylist => self.delete_selected(),
@@ -1124,6 +1137,10 @@ impl App {
                 };
             }
             KeyCode::Char('D') => self.download(DownloadTarget::Current),
+            KeyCode::Char('f') => {
+                let track = self.now_track().cloned();
+                self.set_like(track, None);
+            }
             KeyCode::Char('j') | KeyCode::Down => self.lyrics_scroll = scroll.saturating_add(1),
             KeyCode::Char('k') | KeyCode::Up => self.lyrics_scroll = scroll.saturating_sub(1),
             KeyCode::Char(' ') => self.toggle_pause(),
@@ -1490,6 +1507,10 @@ impl App {
                 None => self.error(format!("no playlist named '{name}'")),
             },
             Command::AddTo(name) => self.add_to_playlist(&name),
+            Command::Like(liked) => {
+                let track = self.target_track();
+                self.set_like(track, Some(liked));
+            }
             Command::Import(url) => self.start_import(url),
             Command::Artist => self.go_to_artist(),
             Command::Similar => self.go_similar(),
@@ -1501,7 +1522,8 @@ impl App {
         }
     }
 
-    fn artist_target(&self) -> Option<Track> {
+    /// The highlighted song, or the playing one when nothing is highlighted.
+    fn target_track(&self) -> Option<Track> {
         let sel = self.selected();
         let history_tracks = (self.view == View::RecentlyPlayed || self.view == View::MostPlayed)
             .then(|| self.history_tracks(self.view == View::MostPlayed));
@@ -1522,7 +1544,7 @@ impl App {
     }
 
     fn go_to_artist(&mut self) {
-        let Some(track) = self.artist_target() else {
+        let Some(track) = self.target_track() else {
             return self.error("No song selected");
         };
         let names = track.artist_names();
@@ -1604,7 +1626,7 @@ impl App {
     }
 
     fn go_album(&mut self) {
-        let Some(track) = self.artist_target() else {
+        let Some(track) = self.target_track() else {
             return self.error("No song selected");
         };
         let Some(album) = track.album.clone() else {
@@ -1633,7 +1655,7 @@ impl App {
             return self.save_results_as_playlist(name);
         }
 
-        if let Some(track) = self.artist_target() {
+        if let Some(track) = self.target_track() {
             if let Some(album) = track.album.clone() {
                 let target_name = name.unwrap_or(album);
                 return self.save_album_background(track, target_name);
@@ -1648,13 +1670,10 @@ impl App {
     }
 
     fn save_album_background(&mut self, track: Track, target_name: String) {
+        let artist = track.artist_names().into_iter().next().unwrap_or_default();
         let Some(album) = track.album else {
             return self.error("No album known for this song");
         };
-        let artist = split_artists(&track.artist)
-            .into_iter()
-            .next()
-            .unwrap_or_default();
         self.busy = Some(format!("Saving album \u{201c}{album}\u{201d}"));
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -1811,7 +1830,7 @@ impl App {
     }
 
     fn go_similar(&mut self) {
-        let Some(track) = self.artist_target() else {
+        let Some(track) = self.target_track() else {
             return self.error("No song selected");
         };
         let busy = format!("Finding songs like \u{201c}{}\u{201d}", track.title);
@@ -2840,6 +2859,40 @@ impl App {
         }
     }
 
+    /// Likes or unlikes `track`; `None` for `want` flips its current state.
+    fn set_like(&mut self, track: Option<Track>, want: Option<bool>) {
+        let Some(track) = track else {
+            return self.error("No song selected");
+        };
+        let liked = self.store.is_liked(&track.id);
+        let want = want.unwrap_or(!liked);
+        if want == liked {
+            let msg = if liked {
+                "Already in Liked Songs"
+            } else {
+                "Not in Liked Songs"
+            };
+            return self.info(msg);
+        }
+        let had_list = self.store.playlists.contains_key(LIKED_SONGS);
+        self.store.set_liked(&track, want);
+        if self.persist() {
+            let label = track.label();
+            self.info(if want {
+                format!("Liked {label}")
+            } else {
+                format!("Removed {label} from Liked Songs")
+            });
+        }
+        // unliking inside the open Liked Songs list removes the row under the cursor
+        let mut sel = self.selected();
+        // a new Liked Songs list is pinned first, so keep the cursor on the same playlist
+        if !had_list && self.view == View::Playlists && !self.in_playlist() {
+            sel += 1;
+        }
+        self.set_selected(sel);
+    }
+
     fn add_to_playlist(&mut self, name: &str) {
         let i = self.selected();
         let track = match self.view {
@@ -3335,6 +3388,94 @@ mod tests {
         app.keymap = Keymap::default();
     }
 
+    fn check_likes(app: &mut App) {
+        app.keymap = Keymap::default();
+        app.pending.clear();
+        app.count = None;
+        app.mode = Mode::Normal;
+        app.on_radio = false;
+        app.store.playlists.clear();
+        app.results = vec![track("aaaaaaaaaaa", "A"), track("bbbbbbbbbbb", "B")];
+        app.set_view(View::Results);
+        app.set_selected(0);
+
+        // `f` likes the highlighted song and pressing it again unlikes it
+        press(app, KeyCode::Char('f'));
+        assert!(app.store.is_liked("aaaaaaaaaaa"));
+        assert!(!app.store.is_liked("bbbbbbbbbbb"));
+        press(app, KeyCode::Char('f'));
+        assert!(!app.store.is_liked("aaaaaaaaaaa"));
+
+        // the commands are not toggles
+        app.run_command("like");
+        app.run_command("like");
+        assert_eq!(app.store.playlists[LIKED_SONGS].len(), 1);
+        app.run_command("unlike");
+        app.run_command("unlike");
+        assert!(app.store.playlists[LIKED_SONGS].is_empty());
+
+        app.run_command("like");
+
+        // the song menu offers the opposite of the current state
+        app.set_selected(1);
+        press(app, KeyCode::Char('G'));
+        assert!(app
+            .menu_items
+            .iter()
+            .any(|i| i.action == MenuAction::Like && i.label == "Like"));
+        press(app, KeyCode::Char('f'));
+        assert!(app.mode == Mode::Normal && app.store.is_liked("bbbbbbbbbbb"));
+        press(app, KeyCode::Char('G'));
+        assert!(app
+            .menu_items
+            .iter()
+            .any(|i| i.action == MenuAction::Like && i.label == "Unlike"));
+        press(app, KeyCode::Esc);
+
+        // Liked Songs is listed first, and unliking inside it drops the row
+        app.store.playlists.insert("Ambient".into(), Vec::new());
+        assert_eq!(app.playlist_name(0).as_deref(), Some(LIKED_SONGS));
+        app.set_view(View::Playlists);
+        app.open = Some(LIKED_SONGS.into());
+        app.pl_state.select(Some(1));
+        press(app, KeyCode::Char('f'));
+        assert_eq!(app.store.playlists[LIKED_SONGS].len(), 1);
+        assert_eq!(app.pl_state.selected(), Some(0));
+        press(app, KeyCode::Char('f'));
+        assert!(app.store.playlists[LIKED_SONGS].is_empty());
+        assert_eq!(app.pl_state.selected(), None);
+
+        // on the playlist list nothing is highlighted, so the playing song is used,
+        // and so it is in the fullscreen lyrics view
+        app.open = None;
+        app.queue = vec![track("ccccccccccc", "C")];
+        app.current = Some(0);
+        app.run_command("like");
+        assert!(app.store.is_liked("ccccccccccc"));
+        app.mode = Mode::Lyrics;
+        press(app, KeyCode::Char('f'));
+        assert!(!app.store.is_liked("ccccccccccc"));
+        app.mode = Mode::Normal;
+
+        // the first like creates Liked Songs at the top, and the cursor stays on its playlist
+        app.store.playlists.clear();
+        app.store.playlists.insert("Ambient".into(), Vec::new());
+        let names = app.store.names();
+        let ambient = names.iter().position(|n| *n == "Ambient").unwrap();
+        app.set_selected(ambient);
+        app.run_command("like");
+        assert_eq!(app.playlist_name(0).as_deref(), Some(LIKED_SONGS));
+        assert_eq!(
+            app.playlist_name(app.selected()).as_deref(),
+            Some("Ambient")
+        );
+
+        app.queue.clear();
+        app.current = None;
+        app.run_command("like");
+        assert_eq!(app.status.as_ref().unwrap().text, "No song selected");
+    }
+
     #[test]
     fn playlist_drill_in() {
         let dir = std::env::temp_dir().join(format!("drift-test-{}", std::process::id()));
@@ -3503,6 +3644,8 @@ mod tests {
             "Seek position is out of range"
         );
         app.play_state = PlayState::Stopped;
+
+        check_likes(&mut app);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

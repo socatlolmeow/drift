@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,6 +6,9 @@ use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::model::Track;
+
+/// Name of the playlist that holds the songs the user has liked.
+pub const LIKED_SONGS: &str = "Liked Songs";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Store {
@@ -158,6 +161,40 @@ impl Store {
         Ok(())
     }
 
+    /// Playlist names in display order: Liked Songs first, the rest alphabetical.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.playlists.keys().map(String::as_str).collect();
+        if let Some(pos) = names.iter().position(|n| *n == LIKED_SONGS) {
+            names[..=pos].rotate_right(1);
+        }
+        names
+    }
+
+    pub fn is_liked(&self, id: &str) -> bool {
+        self.playlists
+            .get(LIKED_SONGS)
+            .is_some_and(|list| list.iter().any(|t| t.id == id))
+    }
+
+    /// Ids of every liked song, for marking whole lists without a scan per row.
+    pub fn liked_ids(&self) -> HashSet<&str> {
+        self.playlists
+            .get(LIKED_SONGS)
+            .map(|list| list.iter().map(|t| t.id.as_str()).collect::<HashSet<_>>())
+            .unwrap_or_default()
+    }
+
+    pub fn set_liked(&mut self, track: &Track, liked: bool) {
+        if liked {
+            let list = self.playlists.entry(LIKED_SONGS.to_string()).or_default();
+            if !list.iter().any(|t| t.id == track.id) {
+                list.push(track.clone());
+            }
+        } else if let Some(list) = self.playlists.get_mut(LIKED_SONGS) {
+            list.retain(|t| t.id != track.id);
+        }
+    }
+
     pub fn resolve_exact(&self, name: &str) -> Option<String> {
         if self.playlists.contains_key(name) {
             return Some(name.to_string());
@@ -229,6 +266,55 @@ mod tests {
         let names: Vec<&str> = out.keys().map(String::as_str).collect();
         assert_eq!(names, ["a", "c", "d"]);
         assert_eq!(out["a"].len(), 2);
+    }
+
+    fn track(id: &str) -> Track {
+        Track {
+            id: id.into(),
+            title: "T".into(),
+            artist: "A".into(),
+            artists: Vec::new(),
+            album: None,
+            duration: None,
+        }
+    }
+
+    #[test]
+    fn liking_adds_once_and_unliking_removes() {
+        let mut s = Store::default();
+        let a = track("aaaaaaaaaaa");
+        assert!(!s.is_liked(&a.id));
+
+        s.set_liked(&a, true);
+        s.set_liked(&a, true);
+        assert!(s.is_liked(&a.id));
+        assert_eq!(s.playlists[LIKED_SONGS].len(), 1);
+        assert!(s.liked_ids().contains("aaaaaaaaaaa"));
+
+        s.set_liked(&a, false);
+        assert!(!s.is_liked(&a.id));
+        // the playlist stays, just empty, like any other playlist
+        assert!(s.playlists[LIKED_SONGS].is_empty());
+    }
+
+    #[test]
+    fn unliking_without_a_liked_playlist_creates_nothing() {
+        let mut s = Store::default();
+        s.set_liked(&track("aaaaaaaaaaa"), false);
+        assert!(s.playlists.is_empty());
+        assert!(s.liked_ids().is_empty());
+    }
+
+    #[test]
+    fn liked_songs_is_listed_first() {
+        let mut s = Store::default();
+        for name in ["Jazz", "Zen", LIKED_SONGS, "Ambient"] {
+            s.playlists.insert(name.into(), Vec::new());
+        }
+        assert_eq!(s.names(), [LIKED_SONGS, "Ambient", "Jazz", "Zen"]);
+
+        s.playlists.remove(LIKED_SONGS);
+        assert_eq!(s.names(), ["Ambient", "Jazz", "Zen"]);
     }
 
     #[test]

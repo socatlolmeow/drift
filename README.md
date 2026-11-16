@@ -17,10 +17,19 @@ Search, queue and play music with no account, no login and no browser.
 
 ---
 
+**Quick start:** [install Drift](#installation), then run:
+
+```bash
+drift "daft punk"
+```
+
+Press `Enter` to play, `a` to queue, `f` to like a song and `?` for every keybind.
+
 ## Table of contents
 
 - [Features](#features)
 - [Installation](#installation)
+  - [Prebuilt binaries](#prebuilt-binaries)
   - [Arch Linux (AUR)](#arch-linux-aur)
   - [Install script](#install-script)
   - [From source](#from-source)
@@ -29,10 +38,12 @@ Search, queue and play music with no account, no login and no browser.
 - [Usage](#usage)
 - [Keybinds](#keybinds)
 - [Commands](#commands)
+- [Liked songs](#liked-songs)
 - [Lyrics](#lyrics)
 - [MPRIS and playerctl](#mpris-and-playerctl)
 - [Configuration](#configuration)
   - [Streaming or downloading](#streaming-or-downloading)
+  - [Saving songs permanently](#saving-songs-permanently)
   - [Discord rich presence](#discord-rich-presence)
   - [Custom keys](#custom-keys)
   - [Environment variables](#environment-variables)
@@ -44,20 +55,32 @@ Search, queue and play music with no account, no login and no browser.
 
 ## Features
 
-- Vim-style keybinds: `j`/`k`, `gg`/`ge`, counts like `5j`, and `:` for the command line
-- Synced lyrics in a side panel or fullscreen, with the current line filled in as it's sung, plus a cover art view with track details and progress
-- Queue and playlists. Build a queue, save and reorder playlists, or import any YouTube / YouTube Music playlist by URL
-- Listening history: Recently Played and Most Played tabs, with persistent play counts
-- Discovery: `ga` for an artist's songs, `gs` for similar songs, `gb` for the album, and `:album` / `:playlist` to search for albums and playlists
-- A song menu (`G`) to play a song, queue it, add it to a playlist, jump to the artist or see its info
-- A command palette (`:search`, `:seek`, `:vol`, `:import` and more) with completion and history
-- Your queue and position are restored the next time you start Drift
-- Media keys and `playerctl` on Linux (MPRIS), plus optional Discord rich presence
-- One TOML file for volume, seek step, shuffle/repeat defaults, accent color and custom keybinds, custom audio streaming options, Discord Rich Presence
+- **Vim-style keybinds:** `j`/`k`, `gg`/`ge`, counts like `5j`, and `:` for the command line
+- **Synced lyrics** in a side panel or fullscreen, with the current line filled in as it's sung, plus a cover art view with track details and progress
+- **Queue and playlists:** build a queue, save and reorder playlists, or import any YouTube / YouTube Music playlist by URL
+- **Liked Songs:** press `f` to heart a song. Liked songs get a ♥ everywhere and are collected in their own playlist
+- **Listening history:** Recently Played and Most Played tabs, with persistent play counts
+- **Discovery:** `ga` for an artist's songs, `gs` for similar songs, `gb` for the album, and `:album` / `:playlist` to search for albums and playlists
+- **Song menu and command palette:** `G` for per-song actions, and `:` for commands like `:search`, `:seek`, `:vol` and `:import`, with completion and history
+- **Downloads:** save songs, albums or playlists as audio files
+- **Session restore:** your queue and position come back the next time you start Drift
+- **Media keys and `playerctl`** on Linux (MPRIS), plus optional Discord rich presence
+- **One TOML file** for volume, seek step, shuffle/repeat defaults, accent color, custom keybinds, audio streaming options and Discord rich presence
 
 ## Installation
 
 Drift needs [mpv](https://mpv.io/) for playback and [yt-dlp](https://github.com/yt-dlp/yt-dlp) to get the audio streams. Run `drift --check` at any time to see if both are installed.
+
+### Prebuilt binaries
+
+Download the archive for your system (Linux or macOS, x86_64 or ARM) from the [latest release](https://github.com/socatlolmeow/drift/releases/latest), then extract it and put `drift` somewhere on your `$PATH`:
+
+```bash
+tar xzf drift-*.tar.gz
+sudo mv drift-*/drift /usr/local/bin/
+```
+
+You still need `mpv` and `yt-dlp`, see below. Each archive has a `.sha256` file next to it if you want to verify the download.
 
 ### Arch Linux (AUR)
 
@@ -145,6 +168,7 @@ These are the defaults. You can change them, see [Custom keys](#custom-keys).
 | `a` `A` `P` | queue the song / queue all results / play all results |
 | `dd` `x` | remove from queue or playlist |
 | `J` `K` | move a queue or playlist item down / up |
+| `f` | like / unlike the highlighted song (or the playing one) |
 | `G` | song menu |
 | `ga` | go to the artist |
 | `gs` | see similar songs |
@@ -179,6 +203,7 @@ Press `:` to open the command line. Most commands have short aliases (`:vol`, `:
 | `:save! name` | save and overwrite an existing playlist |
 | `:savealbum [name]` `:saveresults [name]` | save an album or the results directly as a playlist |
 | `:addto name` `:delpl name` | add a song to / delete a playlist |
+| `:like` `:unlike` | add the selected song to / remove it from Liked Songs |
 | `:import URL` | import a YouTube / YouTube Music playlist |
 | `:album [query]` | open the selected song's album, or search albums |
 | `:playlist query` | search YouTube Music playlists |
@@ -190,6 +215,17 @@ Press `:` to open the command line. Most commands have short aliases (`:vol`, `:
 
 `:save` refuses to overwrite an existing playlist. Use `:save!` to replace it or `:append` to add to the end of it.
 
+## Liked songs
+
+Press `f` on a song to like it. Press `f` again to unlike it. You can also use `:like` and `:unlike`, or pick Like / Unlike in the song menu (`G`).
+
+- **Which song:** the highlighted one, or the playing song when nothing is highlighted (for example on the playlist list). In fullscreen lyrics and the cover view, `f` always acts on the playing song.
+- **The heart:** liked songs show a red ♥ in the Results, Queue, playlist and history lists, next to the artist in the player bar, and in the cover view (♡ when the song isn't liked).
+- **The playlist:** liked songs are saved in a playlist called Liked Songs, which is always first in the Playlists tab. It works like any other playlist: open it, play it with `:load Liked Songs`, download it with `gD`, reorder it with `J`/`K`. New likes go to the end, and removing a song from it unlikes it.
+- **Commands are not toggles:** `:like` on a liked song and `:unlike` on a song that isn't liked do nothing, so they are safe in scripts and key sequences.
+
+Likes are stored with your other playlists, in `playlists.json`. Deleting the Liked Songs playlist removes all your likes. If you already have a playlist named exactly `Liked Songs`, Drift uses it as your likes list.
+
 ## Lyrics
 
 Press `L` for a side panel (needs a terminal at least 70 columns wide). Press `F` to cycle through fullscreen lyrics, cover art and lyrics, and back to the player. `Esc`, `q` or `L` also closes either fullscreen view.
@@ -198,7 +234,7 @@ The cover view shows square artwork, the song title, artist and album, and a pro
 
 In both fullscreen views the current line gets bold, white text on a dark neutral band with extra breathing room, while nearby lines fade with distance. It fills in as it's sung. Songs without synced lyrics show plain text that you can scroll with `j`/`k`.
 
-Both fullscreen views keep playback controls available: `Space` to pause or resume, `h`/`l` or the arrow keys to seek, `n`/`N` to skip tracks, `+`/`-` for volume, `s` for shuffle and `r` to cycle repeat.
+Both fullscreen views keep playback controls available: `Space` to pause or resume, `h`/`l` or the arrow keys to seek, `n`/`N` to skip tracks, `+`/`-` for volume, `s` for shuffle, `r` to cycle repeat and `f` to like the song.
 
 Lyrics come from [LRCLIB](https://lrclib.net) and are only fetched while the panel or fullscreen view is open.
 
@@ -240,17 +276,10 @@ download = false               # false: stream songs; true: download to the cach
 download_max_minutes = 15      # with download = true, longer songs are still streamed (0 = no limit)
 download_dir = "~/Music/drift" # The directory where songs are saved.
 cookies_from_browser = ""      # e.g. "firefox" or "chrome"; passed to yt-dlp when YouTube blocks playback
-stream_from_client = ""        # e.g "android_vr" - The client that is passed to yt-dlp used to stream the songs
-
-[keys]
-quit = "Q"
-move_down = ["j", "down", "ctrl+n"]
-move_up = ["k", "up", "ctrl+p"]
-go_top = ["gg", "home"]
-shuffle = []                  # an empty list unbinds the action
+stream_from_client = ""        # e.g. "android_vr" - the client passed to yt-dlp to stream songs
 ```
 
-If you already have a `config.toml` from an older version, add the `[audio]` section by hand, since Drift never rewrites the file.
+Keybinds go in a `[keys]` section, see [Custom keys](#custom-keys). If you already have a `config.toml` from an older version, add the `[audio]` section by hand, since Drift never rewrites the file.
 
 ### Streaming or downloading
 
@@ -288,7 +317,7 @@ To change keys, add a `[keys]` section to `config.toml`. Each line sets an actio
 
 ```toml
 [keys]
-quit = "Q"
+quit = "ctrl+q"
 move_down = ["j", "down", "ctrl+n"]
 move_up = ["k", "up", "ctrl+p"]
 go_top = ["gg", "home"]
@@ -315,6 +344,7 @@ A key is a character (`"x"`, `"G"`, `"/"`), a name (`space`, `enter`, `esc`, `ta
 | `delete` | `x` `delete` `dd` |
 | `move_item_down` `move_item_up` | `J` / `K` |
 | `shuffle` `repeat` | `s` / `r` |
+| `like` | `f` |
 | `menu` | `G` `menu` |
 | `go_artist` `go_similar` `go_album` `save_album` | `ga` / `gs` / `gb` / `gB` |
 | `download` `download_selected` `download_all` | `D` / `gd` / `gD` |
@@ -340,6 +370,8 @@ In the Playlists tab `seek_forward` opens the selected playlist, and `seek_back`
 
 **Playback fails with "Sign in to confirm you're not a bot".** YouTube wants a login. Set `cookies_from_browser` under `[audio]` to a browser you're logged into YouTube with (for example `"firefox"`), then restart Drift. Updating yt-dlp also helps, since YouTube changes things often.
 
+**Songs are slow to start or fail to load.** Update yt-dlp first, since YouTube changes often. If it keeps happening, try setting `stream_from_client` under `[audio]` (for example `"android_vr"`) and restart Drift.
+
 **The lyrics panel doesn't show up.** It needs a terminal at least 70 columns wide. Make the window wider or use `F` for fullscreen lyrics.
 
 **Cover art looks blocky or is missing.** Press `F` twice from the player to open the cover view. A blocky preview means Drift couldn't detect Kitty or iTerm2 graphics support in your terminal. If you see "Cover art unavailable", the YouTube thumbnail couldn't be fetched or decoded. In very short windows, make the terminal taller to show the cover.
@@ -364,3 +396,5 @@ Recent changes are listed in [CHANGELOG.md](CHANGELOG.md).
 ## License
 
 [Drift](https://github.com/socatlolmeow/drift) is free software, released under the [GNU General Public License version 3 or later](https://www.gnu.org/licenses/gpl-3.0.html).
+
+Drift is not affiliated with YouTube, YouTube Music or Google.

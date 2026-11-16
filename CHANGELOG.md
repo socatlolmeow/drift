@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Liked Songs: press `f` (or use `:like` / `:unlike`) to like a song. Liked
+  songs are marked with a ♥ in every list, in the player bar and in the cover
+  view, and are kept in a Liked Songs playlist that is always listed first.
+  `f` also works in fullscreen lyrics, and in the main view it can be rebound
+  with the new `like` action.
+
+### Changed
+
+- Without a structured artist list (older saves), a credit is only split on
+  `feat.`, `ft.` and `×`. Names like "Hall & Oates" or "Blood, Sweat & Tears"
+  are no longer broken into pieces, and the hardcoded list of exceptions is gone.
+
+### Fixed
+
+- Saving an album from a song now uses the song's own artist list when it has one.
+
 ## [1.7.0] - 2026-11-15
 
 ### Added
