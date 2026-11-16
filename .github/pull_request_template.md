@@ -29,4 +29,4 @@ See [LLM_POLICY.md](../LLM_POLICY.md).
 - [ ] Tested locally
 - [ ] Commit messages follow conventional commits
 - [ ] Docs/README updated if needed
-- [ ] I read [AI_POLICY.md](../AI_POLICY.md)
+- [ ] I read [LLM_POLICY.md](../LLM_POLICY.md)
