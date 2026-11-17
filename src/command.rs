@@ -36,6 +36,7 @@ pub enum Command {
     ShowRecent,
     ShowMostPlayed,
     Volume(Amount),
+    Speed(Amount),
     Seek(Amount),
     Shuffle,
     Repeat(Option<RepeatMode>),
@@ -79,6 +80,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "recent",
     "mostplayed",
     "volume",
+    "speed",
     "seek",
     "shuffle",
     "repeat",
@@ -128,6 +130,29 @@ fn name_arg(arg: &str, cmd: &str) -> Result<String, String> {
         Err(format!("usage: :{cmd} <name>"))
     } else {
         Ok(a.to_string())
+    }
+}
+
+fn parse_speed(arg: &str) -> Result<Amount, String> {
+    let a = arg.trim().trim_end_matches(['x', 'X']);
+    if a.eq_ignore_ascii_case("reset") {
+        return Ok(Amount::Abs(1.0));
+    }
+    let err = || format!(":speed: cannot understand '{arg}'  (e.g. 1.25, +0.25, reset)");
+    let num = |s: &str| {
+        s.parse::<f64>()
+            .ok()
+            .filter(|v| v.is_finite())
+            .ok_or_else(err)
+    };
+    if let Some(rest) = a.strip_prefix('+') {
+        Ok(Amount::Delta(num(rest)?))
+    } else if let Some(rest) = a.strip_prefix('-') {
+        Ok(Amount::Delta(-num(rest)?))
+    } else if a.is_empty() {
+        Err("usage: :speed <value>  (e.g. 1.25, +0.25, reset)".to_string())
+    } else {
+        Ok(Amount::Abs(num(a)?))
     }
 }
 
@@ -191,6 +216,7 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
         "recent" | "history" => ShowRecent,
         "mostplayed" | "most" => ShowMostPlayed,
         "volume" | "vol" | "v" => Volume(parse_amount(arg, "volume")?),
+        "speed" | "spd" => Speed(parse_speed(arg)?),
         "seek" => Seek(parse_amount(arg, "seek")?),
         "shuffle" => Shuffle,
         "repeat" => match arg.to_ascii_lowercase().as_str() {
@@ -338,6 +364,28 @@ mod tests {
             Ok(Some(Command::Save("my mix".into())))
         );
         assert!(parse("save").is_err());
+        assert_eq!(
+            parse("speed 1.25"),
+            Ok(Some(Command::Speed(Amount::Abs(1.25))))
+        );
+        assert_eq!(
+            parse("speed 1.5x"),
+            Ok(Some(Command::Speed(Amount::Abs(1.5))))
+        );
+        assert_eq!(
+            parse("spd +0.25"),
+            Ok(Some(Command::Speed(Amount::Delta(0.25))))
+        );
+        assert_eq!(
+            parse("speed -0.1"),
+            Ok(Some(Command::Speed(Amount::Delta(-0.1))))
+        );
+        assert_eq!(
+            parse("speed reset"),
+            Ok(Some(Command::Speed(Amount::Abs(1.0))))
+        );
+        assert!(parse("speed").is_err());
+        assert!(parse("speed fast").is_err());
         assert_eq!(
             parse("save! my mix"),
             Ok(Some(Command::SaveForce("my mix".into())))

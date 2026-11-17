@@ -297,6 +297,10 @@ impl Player {
         self.send(json!(["set_property", "volume", vol]))
     }
 
+    pub fn set_speed(&mut self, speed: f64) -> Result<()> {
+        self.send(json!(["set_property", "speed", speed]))
+    }
+
     pub fn seek_relative(&mut self, secs: f64) -> Result<()> {
         self.send(json!(["seek", secs, "relative"]))
     }
