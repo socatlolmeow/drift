@@ -282,6 +282,7 @@ pub struct App {
     pub position: f64,
     pub duration: f64,
     pub volume: u8,
+    pub speed: f64,
     pub shuffle: bool,
     pub repeat: RepeatMode,
     pub accent: ratatui::style::Color,
@@ -397,6 +398,7 @@ impl App {
             position: 0.0,
             duration: 0.0,
             volume: p.volume,
+            speed: 1.0,
             shuffle: p.shuffle,
             repeat: p.repeat,
             accent: cfg.ui.accent,
@@ -1484,6 +1486,7 @@ impl App {
             Command::ShowRecent => self.set_view(View::RecentlyPlayed),
             Command::ShowMostPlayed => self.set_view(View::MostPlayed),
             Command::Volume(a) => self.set_volume(a),
+            Command::Speed(a) => self.set_speed(a),
             Command::Seek(a) => self.seek(a),
             Command::Shuffle => self.toggle_shuffle(),
             Command::Repeat(m) => {
@@ -2069,6 +2072,12 @@ impl App {
                 let _ = tx.send(AppEvent::Player(generation, ev));
             })?;
             self.player = Some(p);
+            if self.speed != 1.0 {
+                let speed = self.speed;
+                if let Some(p) = self.player.as_mut() {
+                    let _ = p.set_speed(speed);
+                }
+            }
         }
         Ok(self.player.as_mut().expect("player was just created"))
     }
@@ -2600,6 +2609,24 @@ impl App {
             }
         }
         self.info(format!("Volume: {v}%"));
+    }
+
+    fn set_speed(&mut self, amount: Amount) {
+        let v = match amount {
+            Amount::Abs(a) => a,
+            Amount::Delta(d) => self.speed + d,
+        };
+        if !v.is_finite() {
+            return self.error("Speed is out of range");
+        }
+        let v = ((v.clamp(0.25, 4.0)) * 100.0).round() / 100.0;
+        self.speed = v;
+        if let Some(p) = self.player.as_mut() {
+            if let Err(e) = p.set_speed(v) {
+                return self.error(format!("{e:#}"));
+            }
+        }
+        self.info(format!("Speed: {v}x"));
     }
 
     fn toggle_shuffle(&mut self) {

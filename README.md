@@ -202,6 +202,7 @@ Press `:` to open the command line. Most commands have short aliases (`:vol`, `:
 | `:next` `:prev` | next / previous track |
 | `:seek 90` `1:30` `+10` | absolute or relative seek |
 | `:vol 50` `+5` | set or change the volume |
+| `:speed 1.25` `+0.25` `reset` | playback speed from 0.25x to 4x (alias `:spd`) |
 | `:shuffle` `:repeat [off\|all\|one]` | playback modes |
 | `:add [N]` `:addall` `:playall` | queue results |
 | `:download [current\|selected\|all]` | download audio files (defaults to the current song; alias `:dl`) |

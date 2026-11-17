@@ -1496,6 +1496,7 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("recent", "show recently played songs"),
     ("mostplayed", "show songs ordered by play count"),
     ("volume", "set volume  ·  50 | +5 | -5"),
+    ("speed", "playback speed  ·  1.25 | +0.25 | reset"),
     ("seek", "seek  ·  90 | 1:30 | +10 | -10"),
     ("shuffle", "toggle shuffle"),
     ("repeat", "repeat  ·  off | all | one"),
@@ -1934,6 +1935,7 @@ const HELP_CMDS: HelpEntries = &[
     (":next  :prev", "skip"),
     (":seek 90 | 1:30 | +10", "absolute or relative seek"),
     (":vol 50 | +5", "set or change the volume"),
+    (":speed 1.25 | +0.25 | reset", "playback speed, 0.25 to 4"),
     (":shuffle  :repeat [m]", "modes: off, all or one"),
     (":add [N]  :addall", "queue a result / all results"),
     (

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `:speed` (alias `:spd`) sets the playback speed: `:speed 1.25`, `:speed +0.25`,
+  `:speed reset`. The range is 0.25x to 4x, pitch is kept, and the speed stays
+  for the rest of the session.
 - Liked Songs: press `f` (or use `:like` / `:unlike`) to like a song. Liked
   songs are marked with a ♥ in every list, in the player bar and in the cover
   view, and are kept in a Liked Songs playlist that is always listed first.
