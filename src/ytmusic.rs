@@ -18,6 +18,7 @@ const SONGS_FILTER: &str = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
 const ARTISTS_FILTER: &str = "EgWKAQIgAWoMEA4QChADEAQQCRAF";
 const UA: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0";
 const FALLBACK_COUNT: usize = 25;
+const YTDLP_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
@@ -585,9 +586,8 @@ fn ytdlp_entries(target: &str) -> Result<Vec<Track>> {
     ])
     .arg(target)
     .stdin(Stdio::null());
-    let out = crate::sys::no_window(&mut cmd)
-        .output()
-        .map_err(|e| anyhow!("could not run yt-dlp ({e}); is it installed and on PATH?"))?;
+    let out = crate::player::run_ytdlp(crate::sys::no_window(&mut cmd), YTDLP_TIMEOUT)
+        .map_err(anyhow::Error::msg)?;
 
     let tracks = parse_ytdlp_lines(&String::from_utf8_lossy(&out.stdout));
     if tracks.is_empty() && !out.status.success() {

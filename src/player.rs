@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -326,6 +326,8 @@ impl Drop for Player {
 }
 
 const KEEP_FILES: usize = 40;
+const YTDLP_RESOLVE_TIMEOUT: Duration = Duration::from_secs(60);
+const YTDLP_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// Base yt-dlp command with the user's cookie setting applied.
 fn ytdlp(audio: &Audio) -> Command {
@@ -334,6 +336,46 @@ fn ytdlp(audio: &Audio) -> Command {
         cmd.arg("--cookies-from-browser").arg(browser);
     }
     cmd
+}
+
+fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    })
+}
+
+pub fn output_with_timeout(cmd: &mut Command, timeout: Duration) -> io::Result<Output> {
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    };
+    Ok(Output {
+        status,
+        stdout: stdout.join().unwrap_or_default(),
+        stderr: stderr.join().unwrap_or_default(),
+    })
+}
+
+pub fn run_ytdlp(cmd: &mut Command, timeout: Duration) -> Result<Output, String> {
+    output_with_timeout(cmd, timeout).map_err(|e| match e.kind() {
+        io::ErrorKind::TimedOut => format!("yt-dlp timed out after {}s", timeout.as_secs()),
+        _ => format!("could not run yt-dlp ({e}); is it installed and on PATH?"),
+    })
 }
 
 fn download_component(text: &str) -> String {
@@ -459,12 +501,9 @@ pub fn fetch_audio(id: &str, audio: &Audio) -> Result<PathBuf, String> {
     .arg(&dir)
     .args(["-o", "%(id)s.%(ext)s"])
     .arg(format!("https://music.youtube.com/watch?v={id}"))
-    .stdin(Stdio::null())
-    .stdout(Stdio::null());
+    .stdin(Stdio::null());
     crate::sys::no_window(&mut cmd);
-    let out = cmd
-        .output()
-        .map_err(|e| format!("could not run yt-dlp ({e}); is it installed and on PATH?"))?;
+    let out = run_ytdlp(&mut cmd, YTDLP_DOWNLOAD_TIMEOUT)?;
     if let Some(path) = cached_audio(id).filter(|_| out.status.success()) {
         prune(&dir);
         return Ok(path);
@@ -587,9 +626,7 @@ fn resolve_uncached(id: &str, audio: &Audio) -> Result<Stream, String> {
 fn ytdlp_stream(id: &str, audio: &Audio, client: Option<&str>) -> Result<String, String> {
     let mut cmd = stream_command(id, audio, client);
     crate::sys::no_window(&mut cmd);
-    let out = cmd
-        .output()
-        .map_err(|e| format!("could not run yt-dlp ({e}); is it installed and on PATH?"))?;
+    let out = run_ytdlp(&mut cmd, YTDLP_RESOLVE_TIMEOUT)?;
     let stdout = String::from_utf8_lossy(&out.stdout);
     if let Some(url) = stdout
         .lines()
@@ -709,6 +746,29 @@ mod tests {
             album: None,
             duration: None,
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_with_timeout_captures_both_streams() {
+        let out = output_with_timeout(
+            Command::new("sh").args(["-c", "echo out; echo err >&2"]),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stdout, b"out\n");
+        assert_eq!(out.stderr, b"err\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn output_with_timeout_kills_hung_process() {
+        let started = Instant::now();
+        let err = output_with_timeout(Command::new("sleep").arg("30"), Duration::from_millis(200))
+            .unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]
