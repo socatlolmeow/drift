@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Without a structured artist list (older saves), a credit is only split on
   `feat.`, `ft.` and `×`. Names like "Hall & Oates" or "Blood, Sweat & Tears"
   are no longer broken into pieces, and the hardcoded list of exceptions is gone.
+- Added timeouts for yt-dlp subprocesses. (#31)
 
 ### Fixed
 
