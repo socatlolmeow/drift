@@ -52,6 +52,7 @@ Press `Enter` to play, `a` to queue, `f` to like a song and `?` for every keybin
   - [Streaming or downloading](#streaming-or-downloading)
   - [Saving songs permanently](#saving-songs-permanently)
   - [Discord rich presence](#discord-rich-presence)
+  - [Last.fm scrobbling](#lastfm-scrobbling)
   - [Custom keys](#custom-keys)
   - [Environment variables](#environment-variables)
 - [Troubleshooting](#troubleshooting)
@@ -71,7 +72,7 @@ Press `Enter` to play, `a` to queue, `f` to like a song and `?` for every keybin
 - **Song menu and command palette:** `G` for per-song actions, and `:` for commands like `:search`, `:seek`, `:vol` and `:import`, with completion and history
 - **Downloads:** save songs, albums or playlists as audio files
 - **Session restore:** your queue and position come back the next time you start Drift
-- **Media keys and `playerctl`** on Linux (MPRIS), plus optional Discord rich presence
+- **Media keys and `playerctl`** on Linux (MPRIS), plus optional Discord rich presence and Last.fm scrobbling
 - **One TOML file** for volume, seek step, shuffle/repeat defaults, accent color, custom keybinds, audio streaming options and Discord rich presence
 
 ## Installation
@@ -279,6 +280,10 @@ accent = "cyan"       # a color name or a hex value like "#FF8800"
 [discord]
 client_id = ""        # set this to enable Discord rich presence
 
+[lastfm]
+api_key = ""          # set both to enable Last.fm scrobbling, then run `drift --lastfm-login`
+api_secret = ""
+
 [audio]
 download = false               # false: stream songs; true: download to the cache first
 download_max_minutes = 15      # with download = true, longer songs are still streamed (0 = no limit)
@@ -287,7 +292,7 @@ cookies_from_browser = ""      # e.g. "firefox" or "chrome"; passed to yt-dlp wh
 stream_from_client = ""        # e.g. "android_vr" - the client passed to yt-dlp to stream songs
 ```
 
-Keybinds go in a `[keys]` section, see [Custom keys](#custom-keys). If you already have a `config.toml` from an older version, add the `[audio]` section by hand, since Drift never rewrites the file.
+Keybinds go in a `[keys]` section, see [Custom keys](#custom-keys). If you already have a `config.toml` from an older version, add the `[audio]` and `[lastfm]` sections by hand, since Drift never rewrites the file.
 
 ### Streaming or downloading
 
@@ -318,6 +323,19 @@ This is off by default.
 3. Restart Drift.
 
 Your status then shows the current song with cover art, album, a progress bar and a "Listen Along" button. If Discord isn't running, Drift keeps retrying quietly in the background.
+
+### Last.fm scrobbling
+
+This is off by default. Last.fm gives every application its own API key, so you create one for Drift:
+
+1. Create an API account at https://www.last.fm/api/account/create (any name works, the callback URL can stay empty).
+2. Copy its API key and shared secret into `api_key` and `api_secret` under `[lastfm]` in `config.toml`.
+3. Run `drift --lastfm-login`, open the link it prints, allow access and press Enter. Your password is never seen by Drift.
+4. Start Drift. `drift --lastfm-logout` signs out again.
+
+Drift follows Last.fm's rules: the current song is sent as "now playing" when it starts, and a play is scrobbled once the song is longer than 30 seconds and you have listened to half of it or four minutes, whichever comes first. Seeking, pausing and playback speed are accounted for, and repeat-one scrobbles every round. The primary artist of a song is submitted, not the joined credit.
+
+Requests run in the background and never slow the player down. Scrobbles that cannot be delivered (offline, Last.fm down) are kept in `lastfm_queue.json` in the state directory and retried with backoff, also after a restart, for up to 14 days, which is as far back as Last.fm accepts. The session key is stored in `lastfm.json` next to `config.toml`, readable only by you; the shared secret lives in `config.toml`, so keep that file private. If Last.fm rejects your credentials, Drift shows a message and stops scrobbling until you log in again.
 
 ### Custom keys
 
@@ -383,6 +401,8 @@ In the Playlists tab `seek_forward` opens the selected playlist, and `seek_back`
 **The lyrics panel doesn't show up.** It needs a terminal at least 70 columns wide. Make the window wider or use `F` for fullscreen lyrics.
 
 **Cover art looks blocky or is missing.** Press `F` twice from the player to open the cover view. A blocky preview means Drift couldn't detect Kitty or iTerm2 graphics support in your terminal. If you see "Cover art unavailable", the YouTube thumbnail couldn't be fetched or decoded. In very short windows, make the terminal taller to show the cover.
+
+**Plays don't show up on Last.fm.** Check that Drift didn't show a Last.fm message in the status line, that `api_key` and `api_secret` are both set, and that `drift --lastfm-login` succeeded. Songs shorter than 30 seconds are never scrobbled, and Last.fm can take a minute to show new plays.
 
 **`drift: command not found`.** Make sure `~/.cargo/bin` is in your `$PATH`.
 

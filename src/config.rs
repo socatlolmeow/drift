@@ -85,6 +85,22 @@ pub struct Discord {
     pub client_id: String,
 }
 
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Lastfm {
+    pub api_key: String,
+    pub api_secret: String,
+}
+
+impl Lastfm {
+    /// The API key and shared secret, if both are filled
+    pub fn credentials(&self) -> Option<(&str, &str)> {
+        let key = self.api_key.trim();
+        let secret = self.api_secret.trim();
+        (!key.is_empty() && !secret.is_empty()).then_some((key, secret))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct Audio {
@@ -186,6 +202,7 @@ pub struct Config {
     pub artist: Artist,
     pub ui: Ui,
     pub discord: Discord,
+    pub lastfm: Lastfm,
     pub audio: Audio,
     pub keys: HashMap<String, Keys>,
     #[serde(skip)]
@@ -197,7 +214,7 @@ impl Config {
         Ok(Store::dir()?.join("config.toml"))
     }
 
-    pub fn render(p: &Playback, a: &Artist, u: &Ui, d: &Discord, au: &Audio) -> String {
+    pub fn render(p: &Playback, a: &Artist, u: &Ui, d: &Discord, l: &Lastfm, au: &Audio) -> String {
         let accent = match u.accent {
             Color::Reset => "reset",
             Color::Black => "black",
@@ -250,6 +267,13 @@ accent = \"{accent}\"
 # \"Listening to\") and paste its Application ID here. Empty means off.
 client_id = \"{client_id}\"
 
+[lastfm]
+# Scrobble what you play to Last.fm. Create an API account at
+# https://www.last.fm/api/account/create, paste its API key and shared secret
+# here, then run `drift --lastfm-login` once. Empty means its off.
+api_key = {lastfm_key}
+api_secret = {lastfm_secret}
+
 [audio]
 # false: stream songs straight from YouTube (starts playing right away).
 # true:  download songs to the cache first, then play (and prefetch the next one).
@@ -288,6 +312,8 @@ stream_client = \"{stream_client}\"
             popular = a.popular_first,
             accent = accent,
             client_id = d.client_id,
+            lastfm_key = toml::Value::String(l.api_key.clone()),
+            lastfm_secret = toml::Value::String(l.api_secret.clone()),
             download = au.download,
             dl_max = au.download_max_minutes,
             download_dir = toml::Value::String(au.download_dir.clone()),
@@ -312,6 +338,7 @@ stream_client = \"{stream_client}\"
                     &Artist::default(),
                     &Ui::default(),
                     &Discord::default(),
+                    &Lastfm::default(),
                     &Audio::default(),
                 ));
                 return (Config::default(), None);
@@ -404,6 +431,7 @@ pub fn migrate_legacy() {
         &Artist::default(),
         &Ui::default(),
         &Discord::default(),
+        &Lastfm::default(),
         &Audio::default(),
     ));
 }
@@ -419,6 +447,7 @@ mod tests {
             &Artist::default(),
             &Ui::default(),
             &Discord::default(),
+            &Lastfm::default(),
             &Audio::default(),
         );
         let c: Config = toml::from_str(&text).unwrap();
@@ -494,6 +523,7 @@ mod tests {
             &Artist::default(),
             &u,
             &Discord::default(),
+            &Lastfm::default(),
             &Audio::default(),
         );
         let c: Config = toml::from_str(&text).unwrap();
@@ -512,6 +542,36 @@ mod tests {
         let c: Config = toml::from_str("[keys]\ntoggle_queue_sidebar = \"ctrl+q\"").unwrap();
         assert!(Keymap::build(&c.keys).is_ok());
         assert!(c.keys.contains_key("toggle_queue_sidebar"));
+    }
+
+    #[test]
+    fn lastfm_section() {
+        let c: Config = toml::from_str("").unwrap();
+        assert_eq!(c.lastfm.credentials(), None);
+        let c: Config = toml::from_str("[lastfm]\napi_key = \"key\"").unwrap();
+        assert_eq!(c.lastfm.credentials(), None, "the secret is required too");
+        let c: Config =
+            toml::from_str("[lastfm]\napi_key = \" key \"\napi_secret = \" secret \"").unwrap();
+        assert_eq!(c.lastfm.credentials(), Some(("key", "secret")));
+    }
+
+    #[test]
+    fn lastfm_roundtrip() {
+        let l = Lastfm {
+            api_key: "abc123".into(),
+            api_secret: "se\"cr\\et".into(),
+        };
+        let text = Config::render(
+            &Playback::default(),
+            &Artist::default(),
+            &Ui::default(),
+            &Discord::default(),
+            &l,
+            &Audio::default(),
+        );
+        let c: Config = toml::from_str(&text).unwrap();
+        assert_eq!(c.lastfm.api_key, "abc123");
+        assert_eq!(c.lastfm.api_secret, "se\"cr\\et");
     }
 
     #[test]
@@ -586,6 +646,7 @@ mod tests {
                 &Artist::default(),
                 &Ui::default(),
                 &Discord::default(),
+                &Lastfm::default(),
                 &audio,
             );
             let c: Config = toml::from_str(&text).unwrap();
@@ -607,6 +668,7 @@ mod tests {
             &Artist::default(),
             &Ui::default(),
             &Discord::default(),
+            &Lastfm::default(),
             &a,
         );
         let c: Config = toml::from_str(&text).unwrap();

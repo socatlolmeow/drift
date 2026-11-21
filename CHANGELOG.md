@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Last.fm scrobbling. Set `api_key` and `api_secret` under the new `[lastfm]`
+  section, then run `drift --lastfm-login` once (`--lastfm-logout` signs out).
+  Plays are scrobbled by Last.fm's rules, the current song is sent as "now
+  playing", and scrobbles that cannot be delivered are queued on disk and
+  retried.
 - `:speed` (alias `:spd`) sets the playback speed: `:speed 1.25`, `:speed +0.25`,
   `:speed reset`. The range is 0.25x to 4x, pitch is kept, and the speed stays
   for the rest of the session.
@@ -23,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Without a structured artist list (older saves), a credit is only split on
   `feat.`, `ft.` and `×`. Names like "Hall & Oates" or "Blood, Sweat & Tears"
   are no longer broken into pieces, and the hardcoded list of exceptions is gone.
-- Added timeouts for yt-dlp subprocesses. (#31)
+- Added timeouts for yt-dlp subprocesses.
 
 ### Fixed
 

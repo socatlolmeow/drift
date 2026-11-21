@@ -13,6 +13,7 @@ use crate::discord::Discord;
 use crate::download;
 use crate::history::History;
 use crate::keys::{Action, Key, Keymap, Lookup};
+use crate::lastfm::Scrobbler;
 use crate::lyrics::{self, Lyrics};
 use crate::model::{Collection, RepeatMode, Track};
 use crate::mpris::{Cmd, Mpris};
@@ -25,6 +26,8 @@ use ratatui_image::protocol::StatefulProtocol;
 
 pub enum AppEvent {
     Player(u64, PlayerEvent),
+    /// a message from the last.fm worker thread worth showing
+    Lastfm(String),
     Results {
         id: u64,
         title: String,
@@ -304,6 +307,7 @@ pub struct App {
     similar_load: Option<u64>,
     mpris: Option<Mpris>,
     discord: Option<Discord>,
+    scrobbler: Option<Scrobbler>,
     owns_session: bool,
     keymap: Keymap,
     seek_step: f64,
@@ -348,6 +352,12 @@ impl App {
         };
         let discord = Discord::new(&cfg.discord.client_id);
         let owns_session = Session::claim();
+        let scrobbler = {
+            let t = tx.clone();
+            Scrobbler::new(&cfg.lastfm, owns_session, move |msg| {
+                let _ = t.send(AppEvent::Lastfm(msg));
+            })
+        };
         let mut app = App {
             view: View::Results,
             mode: Mode::Normal,
@@ -420,6 +430,7 @@ impl App {
             similar_load: None,
             mpris,
             discord,
+            scrobbler,
             owns_session,
             seek_step: p.seek_step,
             volume_step: p.volume_step,
@@ -465,6 +476,8 @@ impl App {
         self.player = None;
         self.mpris = None;
         self.discord = None;
+        /* dropping it gives the worker a moment to send what is still queued */
+        self.scrobbler = None;
     }
 
     fn save_session(&mut self, force: bool) -> Result<()> {
@@ -514,6 +527,7 @@ impl App {
         self.sync_cover();
         self.sync_mpris();
         self.sync_discord();
+        self.sync_scrobbler();
         /* open the picker once nothing else is being typed, so keys aren't hijacked */
         if self.mode == Mode::Normal && !self.picks.is_empty() {
             self.mode = Mode::CollectionPick;
@@ -1832,6 +1846,12 @@ impl App {
         }
     }
 
+    fn sync_scrobbler(&mut self) {
+        if let Some(s) = self.scrobbler.as_mut() {
+            s.tick(self.play_state, self.position, self.duration);
+        }
+    }
+
     fn go_similar(&mut self) {
         let Some(track) = self.target_track() else {
             return self.error("No song selected");
@@ -1875,6 +1895,7 @@ impl App {
 
     pub fn on_event(&mut self, ev: AppEvent) {
         match ev {
+            AppEvent::Lastfm(msg) => self.error(msg),
             AppEvent::Results { id, title, result } => {
                 if id != self.search_id {
                     return;
@@ -2168,6 +2189,9 @@ impl App {
         self.history_data.record(&track);
         if let Err(e) = self.history_data.save() {
             self.error(format!("Could not save history: {e:#}"));
+        }
+        if let Some(s) = self.scrobbler.as_mut() {
+            s.start(&track);
         }
     }
 
