@@ -60,8 +60,7 @@ const MD5_K: [u32; 64] = [
     0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
     0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
     0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
-]; // Fucking cancer shit
-
+]; // Fucking cancer shit bro
 fn md5_hex(data: &[u8]) -> String {
     let mut state: [u32; 4] = [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476];
 
@@ -72,11 +71,16 @@ fn md5_hex(data: &[u8]) -> String {
     }
     msg.extend_from_slice(&(data.len() as u64).wrapping_mul(8).to_le_bytes());
 
-    for chunk in msg.chunks_exact(64) {
+    let (blocks, remainder) = msg.as_chunks::<64>();
+    debug_assert!(remainder.is_empty());
+
+    for block in blocks {
         let mut words = [0u32; 16];
-        for (word, bytes) in words.iter_mut().zip(chunk.chunks_exact(4)) {
-            *word = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let (word_bytes, _) = block.as_chunks::<4>();
+        for (word, bytes) in words.iter_mut().zip(word_bytes) {
+            *word = u32::from_le_bytes(*bytes);
         }
+
         let [mut a, mut b, mut c, mut d] = state;
         for (i, (&k, &shift)) in MD5_K.iter().zip(MD5_SHIFTS.iter()).enumerate() {
             let (f, g) = match i / 16 {
@@ -85,10 +89,7 @@ fn md5_hex(data: &[u8]) -> String {
                 2 => (b ^ c ^ d, (3 * i + 5) % 16),
                 _ => (c ^ (b | !d), (7 * i) % 16),
             };
-            let f = f
-                .wrapping_add(a)
-                .wrapping_add(k)
-                .wrapping_add(words[g]);
+            let f = f.wrapping_add(a).wrapping_add(k).wrapping_add(words[g]);
             a = d;
             d = c;
             c = b;
@@ -103,7 +104,7 @@ fn md5_hex(data: &[u8]) -> String {
         .iter()
         .map(|w| format!("{:08x}", w.swap_bytes()))
         .collect()
-} // I copied this shit STRAIGHT from Ai btw
+}
 
 fn sign(params: &BTreeMap<String, String>, secret: &str) -> String {
     let mut payload = String::new();
@@ -117,7 +118,6 @@ fn sign(params: &BTreeMap<String, String>, secret: &str) -> String {
     payload.push_str(secret);
     md5_hex(payload.as_bytes())
 }
-
 
 #[derive(Debug)]
 enum ApiError {
@@ -187,11 +187,7 @@ impl Client {
         self.agent = build_agent(timeout);
     }
 
-    fn call(
-        &self,
-        method: &str,
-        mut params: BTreeMap<String, String>,
-    ) -> Result<Value, ApiError> {
+    fn call(&self, method: &str, mut params: BTreeMap<String, String>) -> Result<Value, ApiError> {
         params.insert("method".into(), method.into());
         params.insert("api_key".into(), self.api_key.clone());
         if let Some(sk) = &self.session_key {
@@ -383,9 +379,12 @@ impl Account {
     fn load() -> Result<Option<Account>> {
         let path = Self::path()?;
         match fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text)
-                .map(Some)
-                .with_context(|| format!("{} is invalid; run 'drift --lastfm-login' again", path.display())),
+            Ok(text) => serde_json::from_str(&text).map(Some).with_context(|| {
+                format!(
+                    "{} is invalid; run 'drift --lastfm-login' again",
+                    path.display()
+                )
+            }),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
         }
@@ -813,7 +812,10 @@ mod tests {
     fn signature_of_a_batch() {
         let mut params = BTreeMap::new();
         params.insert("method".to_string(), "track.scrobble".to_string());
-        params.insert("api_key".to_string(), "0123456789abcdef0123456789abcdef".to_string());
+        params.insert(
+            "api_key".to_string(),
+            "0123456789abcdef0123456789abcdef".to_string(),
+        );
         params.insert("sk".to_string(), "sessionkey".to_string());
         let entries = [
             ("Daft Punk", "Around the World", "1700000000"),
@@ -837,11 +839,23 @@ mod tests {
             ApiError::Auth(_) => "auth",
             ApiError::Rejected(_) => "rejected",
         };
-        assert_eq!(kind(json!({"error": 16, "message": "try later"})), "temporary");
+        assert_eq!(
+            kind(json!({"error": 16, "message": "try later"})),
+            "temporary"
+        );
         assert_eq!(kind(json!({"error": 29, "message": "rate"})), "temporary");
-        assert_eq!(kind(json!({"error": 9, "message": "Invalid session key"})), "auth");
-        assert_eq!(kind(json!({"error": 13, "message": "Invalid signature"})), "auth");
-        assert_eq!(kind(json!({"error": 6, "message": "Invalid parameters"})), "rejected");
+        assert_eq!(
+            kind(json!({"error": 9, "message": "Invalid session key"})),
+            "auth"
+        );
+        assert_eq!(
+            kind(json!({"error": 13, "message": "Invalid signature"})),
+            "auth"
+        );
+        assert_eq!(
+            kind(json!({"error": 6, "message": "Invalid parameters"})),
+            "rejected"
+        );
         assert!(ApiError::from_body(&json!({"scrobbles": {}})).is_none());
     }
 
@@ -850,7 +864,10 @@ mod tests {
         let mut t = track("Daft Punk & Pharrell", "  Get Lucky ");
         t.album = Some("  ".into());
         let s = Scrobble::from_track(&t, 5).unwrap();
-        assert_eq!((s.artist.as_str(), s.track.as_str()), ("Daft Punk", "Get Lucky"));
+        assert_eq!(
+            (s.artist.as_str(), s.track.as_str()),
+            ("Daft Punk", "Get Lucky")
+        );
         assert_eq!(s.album, None);
         assert_eq!(s.timestamp, 5);
 

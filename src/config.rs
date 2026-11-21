@@ -214,14 +214,7 @@ impl Config {
         Ok(Store::dir()?.join("config.toml"))
     }
 
-    pub fn render(
-        p: &Playback,
-        a: &Artist,
-        u: &Ui,
-        d: &Discord,
-        l: &Lastfm,
-        au: &Audio,
-    ) -> String {
+    pub fn render(p: &Playback, a: &Artist, u: &Ui, d: &Discord, l: &Lastfm, au: &Audio) -> String {
         let accent = match u.accent {
             Color::Reset => "reset",
             Color::Black => "black",
