@@ -6,6 +6,7 @@ mod discord;
 mod download;
 mod history;
 mod keys;
+mod lastfm;
 mod lyrics;
 mod model;
 mod mpris;
@@ -32,6 +33,8 @@ drift - vim-style terminal player for YouTube Music (no login needed)
 USAGE:
     drift [QUERY...]      start the player, optionally running a search first
     drift --check         verify that mpv and yt-dlp are installed
+    drift --lastfm-login  sign in to Last.fm so plays are scrobbled
+    drift --lastfm-logout sign out of Last.fm
     drift --help          show this help
     drift --version
 
@@ -82,6 +85,16 @@ fn missing_dependencies(verbose: bool) -> Vec<String> {
     missing
 }
 
+fn exit_code(result: Result<()>) -> ExitCode {
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -105,6 +118,14 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             };
         }
+        Some("--lastfm-login") => {
+            let (cfg, warning) = config::Config::load();
+            if let Some(w) = warning {
+                eprintln!("warning: {w}");
+            }
+            return exit_code(lastfm::login(&cfg.lastfm));
+        }
+        Some("--lastfm-logout") => return exit_code(lastfm::logout()),
         _ => {}
     }
 
