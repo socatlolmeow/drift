@@ -11,6 +11,7 @@ use crate::config::{self, Audio, Config};
 use crate::cover;
 use crate::discord::Discord;
 use crate::download;
+use crate::filter::Query;
 use crate::history::History;
 use crate::keys::{Action, Key, Keymap, Lookup};
 use crate::lastfm::Scrobbler;
@@ -111,6 +112,7 @@ impl View {
 pub enum Mode {
     Normal,
     Command,
+    Filter,
     ArtistPick,
     CollectionPick,
     ConfirmDelete,
@@ -227,6 +229,25 @@ fn menu_item(key: char, label: &str, action: MenuAction) -> MenuItem {
     }
 }
 
+/// A filter typed into one particular list. It is dropped when that list goes
+/// away, so a hidden filter never leaves rows missing somewhere else
+#[derive(Clone, Debug)]
+struct ListFilter {
+    text: String,
+    view: View,
+    /// Set for the songs of an opened playlist, opposed to the playlist list
+    inside_playlist: bool,
+}
+
+/// What a list needs to draw its filter.
+pub struct FilterView {
+    pub text: String,
+    /// The text is still being typed.
+    pub editing: bool,
+    /// Rows that match, in list order. None if the text is blank
+    pub rows: Option<Vec<usize>>,
+}
+
 pub struct Status {
     pub text: String,
     pub level: Level,
@@ -250,6 +271,8 @@ pub struct App {
     pub cmd_buf: String,
     pub cmd_search: bool,
     pub search_kind: SearchKind,
+    filter: Option<ListFilter>,
+    pub filter_offset: usize,
     pub menu_items: Vec<MenuItem>,
     pub menu_sel: usize,
     pub menu_title: String,
@@ -374,6 +397,8 @@ impl App {
             cmd_buf: String::new(),
             cmd_search: false,
             search_kind: SearchKind::Songs,
+            filter: None,
+            filter_offset: 0,
             menu_items: Vec::new(),
             menu_sel: 0,
             menu_title: String::new(),
@@ -528,6 +553,7 @@ impl App {
         self.sync_mpris();
         self.sync_discord();
         self.sync_scrobbler();
+        self.snap_to_filter();
         /* open the picker once nothing else is being typed, so keys aren't hijacked */
         if self.mode == Mode::Normal && !self.picks.is_empty() {
             self.mode = Mode::CollectionPick;
@@ -592,6 +618,11 @@ impl App {
     }
 
     fn set_selected(&mut self, i: usize) {
+        self.put_selected(i);
+        self.snap_to_filter();
+    }
+
+    fn put_selected(&mut self, i: usize) {
         let len = self.cur_len();
         let new = if len == 0 { None } else { Some(i.min(len - 1)) };
         if self.in_playlist() {
@@ -603,6 +634,19 @@ impl App {
     }
 
     fn move_sel(&mut self, delta: isize) {
+        if let Some(rows) = self.visible_rows() {
+            if rows.is_empty() {
+                return;
+            }
+            let sel = self.selected();
+            let here = rows
+                .iter()
+                .position(|&row| row >= sel)
+                .unwrap_or(rows.len() - 1);
+            let there = (here as isize + delta).clamp(0, rows.len() as isize - 1);
+            self.put_selected(rows[there as usize]);
+            return;
+        }
         let len = self.cur_len();
         if len == 0 {
             return;
@@ -612,6 +656,9 @@ impl App {
     }
 
     fn set_view(&mut self, v: View) {
+        if v != self.view {
+            self.reset_filter();
+        }
         if v != View::Playlists {
             self.open = None;
         }
@@ -648,6 +695,7 @@ impl App {
         match self.mode {
             Mode::Help => self.key_help(key),
             Mode::Command => self.key_command(key),
+            Mode::Filter => self.key_filter(key),
             Mode::ArtistPick => self.key_artist_pick(key),
             Mode::CollectionPick => self.key_collection_pick(key),
             Mode::ConfirmDelete => self.key_confirm_delete(key),
@@ -656,6 +704,7 @@ impl App {
             Mode::Lyrics | Mode::LyricsArtwork => self.key_lyrics(key),
             Mode::Normal => self.key_normal(key),
         }
+        self.snap_to_filter();
     }
 
     fn key_normal(&mut self, key: KeyEvent) {
@@ -686,6 +735,16 @@ impl App {
     fn run_action(&mut self, action: Action, n: Option<usize>) {
         let times = n.unwrap_or(1);
 
+        if action == Action::Back && self.filter_text().is_some() {
+            return self.reset_filter();
+        }
+        let opens_playlist = action == Action::SeekForward
+            && self.view == View::Playlists
+            && !self.in_playlist();
+        if (Self::acts_on_row(action) || opens_playlist) && self.filter_hides_everything() {
+            return self.info("No rows match the filter, Esc clears it");
+        }
+
         if self.view == View::Playlists {
             match action {
                 Action::SeekForward if !self.in_playlist() => {
@@ -705,8 +764,22 @@ impl App {
             Action::PageUp => self.move_sel(-20),
             Action::MoveDown => self.move_sel(times as isize),
             Action::MoveUp => self.move_sel(-(times as isize)),
-            Action::GoTop => self.set_selected(n.map_or(0, |n| n.saturating_sub(1))),
-            Action::GoBottom => self.set_selected(n.map_or(usize::MAX, |n| n.saturating_sub(1))),
+            Action::GoTop => match (n, self.visible_rows()) {
+                (None, Some(rows)) => {
+                    if let Some(&first) = rows.first() {
+                        self.set_selected(first);
+                    }
+                }
+                _ => self.set_selected(n.map_or(0, |n| n.saturating_sub(1))),
+            },
+            Action::GoBottom => match (n, self.visible_rows()) {
+                (None, Some(rows)) => {
+                    if let Some(&last) = rows.last() {
+                        self.set_selected(last);
+                    }
+                }
+                _ => self.set_selected(n.map_or(usize::MAX, |n| n.saturating_sub(1))),
+            },
             Action::Menu => self.open_menu(),
             Action::Delete => self.delete_selected(),
 
@@ -749,6 +822,7 @@ impl App {
                 self.search_kind = SearchKind::Songs;
                 self.enter_command_mode();
             }
+            Action::Filter => self.start_filter(),
             Action::Command => {
                 self.cmd_buf.clear();
                 self.cmd_search = false;
@@ -792,6 +866,8 @@ impl App {
     }
 
     fn download_tracks(&self, target: DownloadTarget) -> Result<Vec<Track>, String> {
+        // Like the other bulk actions, downloading "all" takes what the filter shows.
+        let shown = self.filtered_tracks();
         let tracks = match target {
             DownloadTarget::Current => vec![self
                 .now_track()
@@ -800,6 +876,7 @@ impl App {
             DownloadTarget::Selected => vec![self.selected_track().ok_or_else(|| {
                 "No song selected; use gD to download a whole playlist".to_string()
             })?],
+            DownloadTarget::All if shown.is_some() => shown.unwrap_or_default(),
             DownloadTarget::All => match self.view {
                 View::Results => self.results.iter().chain(&self.buffered).cloned().collect(),
                 View::Queue => self.queue.clone(),
@@ -925,10 +1002,21 @@ impl App {
                 View::Playlists => "Download playlist",
                 View::RecentlyPlayed | View::MostPlayed => "Download all songs",
             };
+            let filtered = self.filter_text().is_some();
+            let download_all = if filtered {
+                "Download matching songs"
+            } else {
+                download_all
+            };
             items.push(menu_item('D', download_all, MenuAction::DownloadAll));
             if self.view == View::Results {
-                items.push(menu_item('Q', "Queue all results", MenuAction::QueueAll));
-                items.push(menu_item('P', "Play all results", MenuAction::PlayAll));
+                let (queue_all, play_all) = if filtered {
+                    ("Queue matching results", "Play matching results")
+                } else {
+                    ("Queue all results", "Play all results")
+                };
+                items.push(menu_item('Q', queue_all, MenuAction::QueueAll));
+                items.push(menu_item('P', play_all, MenuAction::PlayAll));
                 if self.results_title.starts_with("Album: ") {
                     items.push(menu_item(
                         'S',
@@ -1460,6 +1548,21 @@ impl App {
     }
 
     fn exec(&mut self, cmd: Command) {
+        let on_row = matches!(
+            cmd,
+            Command::Play(None)
+                | Command::Add(None)
+                | Command::Remove(None)
+                | Command::Like(_)
+                | Command::Artist
+                | Command::Similar
+                | Command::Album(None)
+                | Command::AddTo(_)
+                | Command::Download(DownloadTarget::Selected)
+        );
+        if on_row && self.filter_hides_everything() {
+            return self.info("No rows match the filter, Esc clears it");
+        }
         match cmd {
             Command::Search(q) => self.start_search(q),
             Command::Play(None) => self.play_default(),
@@ -1534,6 +1637,7 @@ impl App {
             Command::Album(Some(q)) => self.start_collection_search(q, Kind::Album),
             Command::Album(None) => self.go_album(),
             Command::PlaylistSearch(q) => self.start_collection_search(q, Kind::Playlist),
+            Command::Filter(text) => self.filter_command(text),
             Command::Lyrics => self.lyrics_panel = !self.lyrics_panel,
             Command::Help => self.open_help(),
         }
@@ -1916,6 +2020,7 @@ impl App {
                         let n = tracks.len();
                         self.results = tracks;
                         self.results_title = title;
+                        self.reset_filter();
                         self.states[View::Results.idx()].select(Some(0));
                         self.set_view(View::Results);
                         self.info(format!("{n} results — Enter plays, a queues, ? for help"));
@@ -2389,7 +2494,13 @@ impl App {
     }
 
     fn play_history_track(&mut self, track: Track, most_played: bool) {
-        self.radio = self.history_tracks(most_played);
+        // Keep playing through the rows a filter shows rather than the hidden ones.
+        self.radio = match self.filtered_tracks() {
+            Some(shown) if self.view == View::MostPlayed || self.view == View::RecentlyPlayed => {
+                shown
+            }
+            _ => self.history_tracks(most_played),
+        };
         self.radio_played.clear();
         let index = self
             .radio
@@ -2403,9 +2514,18 @@ impl App {
         if i >= self.results.len() {
             return;
         }
-        self.radio = self.results.clone();
+        // With a filter on, play on through the rows that are shown.
+        let rows = self.result_rows();
+        let (rows, start) = match rows.iter().position(|&row| row == i) {
+            Some(start) => (rows, start),
+            None => ((0..self.results.len()).collect::<Vec<usize>>(), i),
+        };
+        self.radio = rows
+            .iter()
+            .filter_map(|&row| self.results.get(row).cloned())
+            .collect();
         self.radio_played.clear();
-        self.play_radio(i);
+        self.play_radio(start);
     }
 
     fn play_radio(&mut self, i: usize) {
@@ -2715,14 +2835,25 @@ impl App {
         if self.results.is_empty() {
             return self.error("No results to add");
         }
-        let n = self.results.len();
-        self.queue.extend(self.results.iter().cloned());
+        let rows = self.result_rows();
+        if rows.is_empty() {
+            return self.error("No songs match the filter");
+        }
+        let n = rows.len();
+        let picked: Vec<Track> = rows
+            .iter()
+            .filter_map(|&row| self.results.get(row).cloned())
+            .collect();
+        self.queue.extend(picked);
         self.info(format!("Queued {n} tracks"));
     }
 
     fn play_all_results(&mut self) {
         if self.results.is_empty() {
             return self.error("No results to play");
+        }
+        if self.view == View::Results && self.filter_hides_everything() {
+            return self.error("No songs match the filter");
         }
         let start = if self.view == View::Results {
             self.selected()
@@ -3007,11 +3138,13 @@ impl App {
             return;
         };
         let len = self.store.playlists.get(&name).map_or(0, |l| l.len());
+        self.reset_filter();
         self.open = Some(name);
         self.pl_state.select(if len == 0 { None } else { Some(0) });
     }
 
     fn close_playlist(&mut self) {
+        self.reset_filter();
         self.open = None;
     }
 
@@ -3023,6 +3156,11 @@ impl App {
             return self.error(format!("Playlist \u{201c}{name}\u{201d} is empty"));
         }
         let i = i.min(tracks.len() - 1);
+        let (tracks, i) = if self.in_playlist() && self.open.as_deref() == Some(name) {
+            self.narrow_to_filter(tracks, i)
+        } else {
+            (tracks, i)
+        };
         self.radio = tracks;
         self.radio_played.clear();
         self.play_radio(i);
@@ -3057,6 +3195,9 @@ impl App {
     }
 
     fn move_item(&mut self, dir: isize) {
+        if self.filter_text().is_some() {
+            return self.info("Clear the filter (Esc) to reorder rows");
+        }
         if self.in_playlist() {
             return self.move_playlist_track(dir);
         }
@@ -3091,6 +3232,277 @@ impl App {
             let sel = self.selected();
             self.set_selected(sel);
         }
+    }
+}
+
+/// Rows of `tracks` that pass `query`, in order.
+fn matching_rows(tracks: &[Track], query: &Query) -> Vec<usize> {
+    tracks
+        .iter()
+        .enumerate()
+        .filter(|(_, track)| query.matches_track(track))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The songs at `rows`, in that order.
+fn pick_rows(tracks: &[Track], rows: &[usize]) -> Vec<Track> {
+    rows.iter()
+        .filter_map(|&row| tracks.get(row).cloned())
+        .collect()
+}
+
+/// Filtering the list on screen (`\`, `F4` or `:filter`).
+///
+/// The cursor always holds a row number of the whole list, filtered or not, so
+/// everything that acts on "the selected row" keeps working. The filter only
+/// decides which rows are drawn and which ones the cursor may rest on.
+impl App {
+    fn current_filter(&self) -> Option<&ListFilter> {
+        self.filter
+            .as_ref()
+            .filter(|f| f.view == self.view && f.inside_playlist == self.in_playlist())
+    }
+
+    /// The text filtering the list on screen. `None` when it is not filtered,
+    /// which includes a filter that has no words yet.
+    pub fn filter_text(&self) -> Option<&str> {
+        self.current_filter()
+            .map(|f| f.text.as_str())
+            .filter(|text| !text.trim().is_empty())
+    }
+
+    pub fn filter_view(&self) -> Option<FilterView> {
+        let filter = self.current_filter()?;
+        Some(FilterView {
+            text: filter.text.clone(),
+            editing: self.mode == Mode::Filter,
+            rows: self.visible_rows(),
+        })
+    }
+
+    /// Rows of the list on screen that pass the filter, as indexes into the
+    /// whole list in ascending order. `None` when nothing is filtered.
+    pub fn visible_rows(&self) -> Option<Vec<usize>> {
+        let query = Query::parse(self.filter_text()?)?;
+        let rows = match self.view {
+            View::Results => matching_rows(&self.results, &query),
+            View::Queue => matching_rows(&self.queue, &query),
+            View::Playlists if self.in_playlist() => self
+                .open
+                .as_ref()
+                .and_then(|name| self.store.playlists.get(name))
+                .map_or_else(Vec::new, |tracks| matching_rows(tracks, &query)),
+            View::Playlists => self
+                .store
+                .names()
+                .iter()
+                .enumerate()
+                .filter(|&(_, name)| query.matches_text(name))
+                .map(|(i, _)| i)
+                .collect(),
+            View::RecentlyPlayed | View::MostPlayed => self
+                .history_data
+                .sorted(self.view == View::MostPlayed)
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| query.matches_track(&entry.track))
+                .map(|(i, _)| i)
+                .collect(),
+        };
+        Some(rows)
+    }
+
+    fn filter_hides_everything(&self) -> bool {
+        self.visible_rows().is_some_and(|rows| rows.is_empty())
+    }
+
+    /// Actions that need a highlighted row, which there is none of while a
+    /// filter hides every row.
+    fn acts_on_row(action: Action) -> bool {
+        matches!(
+            action,
+            Action::Menu
+                | Action::Delete
+                | Action::Activate
+                | Action::Add
+                | Action::MoveItemDown
+                | Action::MoveItemUp
+                | Action::GoArtist
+                | Action::GoSimilar
+                | Action::GoAlbum
+                | Action::SaveAlbum
+                | Action::Like
+                | Action::DownloadSelected
+        )
+    }
+
+    /// Rows of the Results tab that play, queue and download all work on.
+    fn result_rows(&self) -> Vec<usize> {
+        if self.view == View::Results {
+            if let Some(rows) = self.visible_rows() {
+                return rows;
+            }
+        }
+        (0..self.results.len()).collect()
+    }
+
+    /// The songs the filtered list shows. `None` when the list is not
+    /// filtered, or lists playlists rather than songs.
+    fn filtered_tracks(&self) -> Option<Vec<Track>> {
+        let rows = self.visible_rows()?;
+        match self.view {
+            View::Results => Some(pick_rows(&self.results, &rows)),
+            View::Queue => Some(pick_rows(&self.queue, &rows)),
+            View::Playlists if self.in_playlist() => self
+                .open
+                .as_ref()
+                .and_then(|name| self.store.playlists.get(name))
+                .map(|tracks| pick_rows(tracks, &rows)),
+            View::Playlists => None,
+            View::RecentlyPlayed | View::MostPlayed => {
+                let all = self.history_tracks(self.view == View::MostPlayed);
+                Some(pick_rows(&all, &rows))
+            }
+        }
+    }
+
+    /// Playing from a filtered list should continue through the rows that are
+    /// shown, not through the ones hidden between them.
+    fn narrow_to_filter(&self, tracks: Vec<Track>, i: usize) -> (Vec<Track>, usize) {
+        let Some(rows) = self.visible_rows() else {
+            return (tracks, i);
+        };
+        match rows.iter().position(|&row| row == i) {
+            Some(start) => (pick_rows(&tracks, &rows), start),
+            None => (tracks, i),
+        }
+    }
+
+    /// Puts the cursor on a row the filter shows: the next one down, or the
+    /// last one when there is none.
+    fn snap_to_filter(&mut self) {
+        let Some(rows) = self.visible_rows() else {
+            return;
+        };
+        let Some(&last) = rows.last() else {
+            return;
+        };
+        let sel = self.selected();
+        if rows.binary_search(&sel).is_ok() {
+            return;
+        }
+        let target = rows.iter().copied().find(|&row| row > sel).unwrap_or(last);
+        self.put_selected(target);
+    }
+
+    fn start_filter(&mut self) {
+        if self.cur_len() == 0 {
+            return self.info("Nothing to filter here");
+        }
+        if self.current_filter().is_none() {
+            self.filter = Some(ListFilter {
+                text: String::new(),
+                view: self.view,
+                inside_playlist: self.in_playlist(),
+            });
+            self.filter_offset = 0;
+        }
+        self.mode = Mode::Filter;
+    }
+
+    /// Removes the filter, leaving the cursor on the row it was on.
+    fn reset_filter(&mut self) {
+        self.filter = None;
+        self.filter_offset = 0;
+        if self.mode == Mode::Filter {
+            self.mode = Mode::Normal;
+        }
+    }
+
+    /// The matches changed: start again from the first one.
+    fn filter_changed(&mut self) {
+        self.filter_offset = 0;
+        let first = self.visible_rows().and_then(|rows| rows.first().copied());
+        if let Some(first) = first {
+            self.put_selected(first);
+        }
+    }
+
+    fn key_filter(&mut self, key: KeyEvent) {
+        let ctrl = is_ctrl(&key);
+        match key.code {
+            KeyCode::Esc => self.reset_filter(),
+            KeyCode::Enter => {
+                // Keep the filter and go back to normal keys: Enter then plays.
+                self.mode = Mode::Normal;
+                if self.filter_text().is_none() {
+                    self.reset_filter();
+                }
+            }
+            KeyCode::Backspace => {
+                let was_empty = self
+                    .filter
+                    .as_mut()
+                    .is_none_or(|filter| filter.text.pop().is_none());
+                if was_empty {
+                    self.reset_filter();
+                } else {
+                    self.filter_changed();
+                }
+            }
+            KeyCode::Up => self.move_sel(-1),
+            KeyCode::Down => self.move_sel(1),
+            KeyCode::Char('p') if ctrl => self.move_sel(-1),
+            KeyCode::Char('n') if ctrl => self.move_sel(1),
+            KeyCode::Char('u') if ctrl => {
+                if let Some(filter) = self.filter.as_mut() {
+                    filter.text.clear();
+                }
+                self.filter_changed();
+            }
+            KeyCode::Char('w') if ctrl => {
+                if let Some(filter) = self.filter.as_mut() {
+                    let trimmed = filter.text.trim_end().len();
+                    let cut = filter.text[..trimmed].rfind(' ').map_or(0, |i| i + 1);
+                    filter.text.truncate(cut);
+                }
+                self.filter_changed();
+            }
+            KeyCode::Char(c) if !ctrl => {
+                if let Some(filter) = self.filter.as_mut() {
+                    filter.text.push(c);
+                }
+                self.filter_changed();
+            }
+            _ => {}
+        }
+    }
+
+    /// `:filter <text>` filters the list on screen, `:filter` clears it.
+    fn filter_command(&mut self, text: Option<String>) {
+        let text = text.filter(|text| !text.trim().is_empty());
+        let Some(text) = text else {
+            if self.current_filter().is_some() {
+                self.reset_filter();
+                self.info("Filter cleared");
+            } else {
+                self.info("Nothing is filtered, use :filter <text>");
+            }
+            return;
+        };
+        let total = self.cur_len();
+        if total == 0 {
+            return self.info("Nothing to filter here");
+        }
+        self.filter = Some(ListFilter {
+            text,
+            view: self.view,
+            inside_playlist: self.in_playlist(),
+        });
+        self.filter_changed();
+        let shown = self.visible_rows().map_or(total, |rows| rows.len());
+        self.info(format!("{shown} of {total} match, Esc clears the filter"));
     }
 }
 
@@ -3405,6 +3817,141 @@ mod tests {
         app.shuffle = false;
     }
 
+    fn check_filter(app: &mut App) {
+        app.keymap = Keymap::default();
+        app.pending.clear();
+        app.count = None;
+        app.mode = Mode::Normal;
+        app.on_radio = false;
+        app.shuffle = false;
+        app.repeat = RepeatMode::Off;
+        app.queue.clear();
+        app.current = None;
+        app.played.clear();
+        app.store.playlists.clear();
+        app.reset_filter();
+        let by = |id: &str, title: &str, artist: &str| Track {
+            artist: artist.into(),
+            ..track(id, title)
+        };
+        app.results = vec![
+            by("aaaaaaaaaaa", "Around the World", "Daft Punk"),
+            by("bbbbbbbbbbb", "Karma Police", "Radiohead"),
+            by("ccccccccccc", "Digital Love", "Daft Punk"),
+            by("ddddddddddd", "Paranoid Android", "Radiohead"),
+        ];
+        app.set_view(View::Results);
+        app.set_selected(0);
+
+        // typing narrows the list and puts the cursor on the first match
+        press(app, KeyCode::Char('\\'));
+        assert!(app.mode == Mode::Filter);
+        for c in "radio".chars() {
+            press(app, KeyCode::Char(c));
+        }
+        assert_eq!(app.visible_rows(), Some(vec![1, 3]));
+        assert_eq!(app.selected(), 1);
+
+        // moving steps over the hidden row between the matches
+        press(app, KeyCode::Down);
+        assert_eq!(app.selected(), 3);
+        press(app, KeyCode::Down);
+        assert_eq!(app.selected(), 3);
+
+        // Enter keeps the filter and hands the keys back
+        press(app, KeyCode::Enter);
+        assert!(app.mode == Mode::Normal);
+        assert_eq!(app.filter_text(), Some("radio"));
+        press(app, KeyCode::Char('k'));
+        assert_eq!(app.selected(), 1);
+        press(app, KeyCode::Char('g'));
+        press(app, KeyCode::Char('e'));
+        assert_eq!(app.selected(), 3);
+        press(app, KeyCode::Char('g'));
+        press(app, KeyCode::Char('g'));
+        assert_eq!(app.selected(), 1);
+
+        // adding and playing work on what is shown
+        press(app, KeyCode::Char('a'));
+        assert_eq!(app.queue.len(), 1);
+        assert_eq!(app.queue[0].id, "bbbbbbbbbbb");
+        app.queue.clear();
+        press(app, KeyCode::Char('A'));
+        let queued: Vec<&str> = app.queue.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(queued, ["bbbbbbbbbbb", "ddddddddddd"]);
+        app.queue.clear();
+        press(app, KeyCode::Enter);
+        assert_eq!(now_title(app), Some("Karma Police"));
+        app.advance(true);
+        assert_eq!(now_title(app), Some("Paranoid Android"));
+
+        // Esc clears the filter and the cursor stays on the same song
+        press(app, KeyCode::Esc);
+        assert_eq!(app.filter_text(), None);
+        assert_eq!(app.visible_rows(), None);
+        assert_eq!(app.selected(), 1);
+
+        // a filter that matches nothing leaves no row to act on
+        app.run_command("filter zzzz");
+        assert_eq!(app.visible_rows(), Some(Vec::new()));
+        app.queue.clear();
+        press(app, KeyCode::Char('a'));
+        assert!(app.queue.is_empty());
+        app.run_command("add");
+        assert!(app.queue.is_empty());
+        app.run_command("filter");
+        assert_eq!(app.visible_rows(), None);
+
+        // a filter belongs to its list and ends when that list goes away
+        app.run_command("filter daft");
+        assert_eq!(app.visible_rows(), Some(vec![0, 2]));
+        app.set_view(View::Queue);
+        assert_eq!(app.filter_text(), None);
+        app.set_view(View::Results);
+        assert_eq!(app.filter_text(), None);
+
+        // Backspace on an empty filter leaves filter mode
+        press(app, KeyCode::Char('\\'));
+        press(app, KeyCode::Char('x'));
+        press(app, KeyCode::Backspace);
+        assert!(app.mode == Mode::Filter);
+        press(app, KeyCode::Backspace);
+        assert!(app.mode == Mode::Normal);
+        assert_eq!(app.filter_text(), None);
+
+        // inside a playlist; leaving it drops the filter, and rows cannot be
+        // reordered while some are hidden
+        app.store.playlists.insert(
+            "mix".into(),
+            vec![
+                by("eeeeeeeeeee", "One", "A"),
+                by("fffffffffff", "Two", "B"),
+                by("ggggggggggg", "Three", "A"),
+            ],
+        );
+        app.set_view(View::Playlists);
+        app.open_selected_playlist();
+        assert!(app.in_playlist());
+        app.run_command("filter a");
+        assert_eq!(app.visible_rows(), Some(vec![0, 2]));
+        assert_eq!(app.selected(), 0);
+        press(app, KeyCode::Char('J'));
+        assert_eq!(app.store.playlists["mix"][0].title, "One");
+        press(app, KeyCode::Left);
+        assert!(!app.in_playlist());
+        assert_eq!(app.filter_text(), None);
+
+        // filtering the playlist list itself
+        app.store
+            .playlists
+            .insert("workout".into(), vec![by("hhhhhhhhhhh", "Run", "C")]);
+        app.run_command("filter work");
+        assert_eq!(app.visible_rows(), Some(vec![1]));
+        assert_eq!(app.playlist_name(app.selected()).as_deref(), Some("workout"));
+        app.reset_filter();
+        app.set_view(View::Results);
+    }
+
     fn check_custom_keys(app: &mut App) {
         let custom = [
             ("move_down", Keys::Many(vec!["e".into()])),
@@ -3697,6 +4244,7 @@ mod tests {
         app.play_state = PlayState::Stopped;
 
         check_likes(&mut app);
+        check_filter(&mut app);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -4,6 +4,7 @@ mod config;
 mod cover;
 mod discord;
 mod download;
+mod filter;
 mod history;
 mod keys;
 mod lastfm;

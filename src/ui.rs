@@ -3,10 +3,12 @@ use std::collections::HashSet;
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, Wrap};
+use ratatui::widgets::{Block, BorderType, Cell, Clear, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, Level, LyricsState, MenuAction, Mode, PlayState, SearchKind, View, NO_KEY};
+use crate::app::{
+    App, FilterView, Level, LyricsState, MenuAction, Mode, PlayState, SearchKind, View, NO_KEY,
+};
 use crate::lyrics::Lyrics;
 use crate::model::{fmt_time, Track};
 use crate::store::LIKED_SONGS;
@@ -234,13 +236,22 @@ fn heart_cell(liked: &HashSet<&str>, id: &str) -> Cell<'static> {
 
 fn track_rows<'a>(
     tracks: &'a [Track],
+    visible: Option<&[usize]>,
     playing: Option<(&str, &'a str)>,
     show_album: bool,
     liked: &HashSet<&str>,
 ) -> Vec<Row<'a>> {
-    tracks
+    let all: Vec<usize>;
+    let order: &[usize] = match visible {
+        Some(rows) => rows,
+        None => {
+            all = (0..tracks.len()).collect();
+            &all
+        }
+    };
+    order
         .iter()
-        .enumerate()
+        .filter_map(|&i| tracks.get(i).map(|t| (i, t)))
         .map(|(i, t)| {
             let is_playing = playing.is_some_and(|(id, _)| id == t.id);
             let marker = if is_playing {
@@ -300,6 +311,65 @@ fn track_table<'a>(
         .highlight_symbol(CURSOR)
 }
 
+/// "12", or "3/12" when a filter hides some rows
+fn count_label(shown: usize, total: usize) -> String {
+    if shown == total {
+        total.to_string()
+    } else {
+        format!("{shown}/{total}")
+    }
+}
+
+fn filter_footer(filter: &FilterView, shown: usize, total: usize, accent: Color) -> Line<'static> {
+    let mut spans = vec![
+        Span::styled(" filter ", Style::new().fg(Color::Black).bg(accent).bold()),
+        Span::raw(" "),
+        Span::styled(filter.text.clone(), Style::new().fg(Color::White)),
+    ];
+    if filter.editing {
+        spans.push(Span::styled("▏", Style::new().fg(accent)));
+    }
+    spans.push(Span::styled(format!("  {shown}/{total}"), dim()));
+    let keys = if filter.editing {
+        "  ⏎ keep · Esc clear "
+    } else {
+        "  Esc clear "
+    };
+    spans.push(Span::styled(keys, dim()));
+    Line::from(spans)
+}
+
+/// Draws `table`. A filtered table only holds the rows that match, so the
+/// cursor (a row of the whole list) is translated into its place among them
+fn render_table(
+    f: &mut Frame,
+    table: Table,
+    area: Rect,
+    state: &mut TableState,
+    visible: Option<&[usize]>,
+    selected: usize,
+    offset: &mut usize,
+) {
+    match visible {
+        None => f.render_stateful_widget(table, area, state),
+        Some(rows) => {
+            let position = rows.iter().position(|&row| row == selected);
+            let mut local = TableState::default()
+                .with_offset(*offset)
+                .with_selected(position);
+            f.render_stateful_widget(table, area, &mut local);
+            *offset = local.offset();
+        }
+    }
+}
+
+fn no_matches(filter: Option<&FilterView>) -> String {
+    format!(
+        "No matches for \u{201c}{}\u{201d}.",
+        filter.map_or("", |filter| filter.text.as_str())
+    )
+}
+
 fn empty_hint(f: &mut Frame, block: Block, area: Rect, lines: &[&str]) {
     let text: Vec<Line> = lines.iter().map(|l| Line::from(*l).style(dim())).collect();
     f.render_widget(
@@ -319,16 +389,23 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
         View::Queue => (&app.queue, " Queue ".to_string()),
         _ => (&app.results, format!(" {} ", app.results_title)),
     };
+    let filter = app.filter_view();
+    let visible = filter.as_ref().and_then(|fv| fv.rows.as_deref());
+    let total = tracks.len();
+    let shown = visible.map_or(total, <[usize]>::len);
     let mut block = Block::bordered()
-        .title(format!("{title}({}) ", tracks.len()))
+        .title(format!("{title}({}) ", count_label(shown, total)))
         .border_style(Style::new().fg(app.accent));
-    if !tracks.is_empty() {
+    if let Some(fv) = filter.as_ref() {
+        block = block.title_bottom(filter_footer(fv, shown, total, app.accent));
+    } else if !tracks.is_empty() {
         let keys: &[(&str, &str)] = if view == View::Queue {
             &[
                 ("⏎", "play"),
                 ("x", "remove"),
                 ("J/K", "move"),
                 ("G", "menu"),
+                ("\\", "filter"),
                 ("?", "help"),
             ]
         } else {
@@ -337,6 +414,7 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
                 ("a", "queue"),
                 ("G", "menu"),
                 ("/", "search"),
+                ("\\", "filter"),
                 ("?", "help"),
             ]
         };
@@ -361,11 +439,23 @@ fn draw_tracks(f: &mut Frame, app: &mut App, area: Rect, view: View) {
         };
         return empty_hint(f, block, area, hint);
     }
+    if shown == 0 {
+        let text = no_matches(filter.as_ref());
+        return empty_hint(f, block, area, &["", text.as_str(), "Esc clears the filter."]);
+    }
     let liked = app.store.liked_ids();
-    let rows = track_rows(tracks, playing, show_album, &liked);
+    let rows = track_rows(tracks, visible, playing, show_album, &liked);
     let table = track_table(rows, show_album, block, app.accent);
-    let idx = view.idx();
-    f.render_stateful_widget(table, area, &mut app.states[idx]);
+    let selected = app.selected();
+    render_table(
+        f,
+        table,
+        area,
+        &mut app.states[view.idx()],
+        visible,
+        selected,
+        &mut app.filter_offset,
+    );
 }
 
 fn clipped(text: &str, width: usize) -> String {
@@ -452,17 +542,29 @@ fn draw_queue_sidebar(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_history(f: &mut Frame, app: &mut App, area: Rect, most_played: bool) {
     let entries = app.history_data.sorted(most_played);
+    let filter = app.filter_view();
+    let visible = filter.as_ref().and_then(|fv| fv.rows.as_deref());
+    let total = entries.len();
+    let shown = visible.map_or(total, <[usize]>::len);
     let title = if most_played {
         " Most Played "
     } else {
         " Recently Played "
     };
     let mut block = Block::bordered()
-        .title(format!("{title}({}) ", entries.len()))
+        .title(format!("{title}({}) ", count_label(shown, total)))
         .border_style(Style::new().fg(app.accent));
-    if !entries.is_empty() {
+    if let Some(fv) = filter.as_ref() {
+        block = block.title_bottom(filter_footer(fv, shown, total, app.accent));
+    } else if !entries.is_empty() {
         if let Some(h) = hints(
-            &[("⏎", "play"), ("a", "queue"), ("G", "menu"), ("?", "help")],
+            &[
+                ("⏎", "play"),
+                ("a", "queue"),
+                ("G", "menu"),
+                ("\\", "filter"),
+                ("?", "help"),
+            ],
             area.width,
         ) {
             block = block.title_bottom(h);
@@ -481,12 +583,24 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect, most_played: bool) {
         );
     }
 
+    if shown == 0 {
+        let text = no_matches(filter.as_ref());
+        return empty_hint(f, block, area, &["", text.as_str(), "Esc clears the filter."]);
+    }
+
     let show_album = area.width >= 88;
     let now = playing_marker(app);
     let playing = now.as_ref().map(|(id, marker)| (id.as_str(), *marker));
     let liked = app.store.liked_ids();
-    let mut rows = Vec::with_capacity(entries.len());
-    for (i, entry) in entries.iter().enumerate() {
+    let order: Vec<usize> = match visible {
+        Some(rows) => rows.to_vec(),
+        None => (0..total).collect(),
+    };
+    let mut rows = Vec::with_capacity(order.len());
+    for &i in &order {
+        let Some(entry) = entries.get(i) else {
+            continue;
+        };
         let track = &entry.track;
         let is_playing = playing.is_some_and(|(id, _)| id == track.id);
         let marker = if is_playing {
@@ -535,7 +649,9 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect, most_played: bool) {
         .column_spacing(1)
         .row_highlight_style(selected_style(app.accent))
         .highlight_symbol(CURSOR);
-    f.render_stateful_widget(
+    let selected = app.selected();
+    render_table(
+        f,
         table,
         area,
         &mut app.states[if most_played {
@@ -543,6 +659,9 @@ fn draw_history(f: &mut Frame, app: &mut App, area: Rect, most_played: bool) {
         } else {
             View::RecentlyPlayed.idx()
         }],
+        visible,
+        selected,
+        &mut app.filter_offset,
     );
 }
 
@@ -553,15 +672,22 @@ fn draw_open_playlist(f: &mut Frame, app: &mut App, area: Rect, name: &str) {
     let Some(tracks) = app.store.playlists.get(name) else {
         return;
     };
+    let filter = app.filter_view();
+    let visible = filter.as_ref().and_then(|fv| fv.rows.as_deref());
+    let total = tracks.len();
+    let shown = visible.map_or(total, <[usize]>::len);
     let mut block = Block::bordered()
-        .title(format!(" {name} ({}) ", tracks.len()))
+        .title(format!(" {name} ({}) ", count_label(shown, total)))
         .border_style(Style::new().fg(app.accent));
-    if !tracks.is_empty() {
+    if let Some(fv) = filter.as_ref() {
+        block = block.title_bottom(filter_footer(fv, shown, total, app.accent));
+    } else if !tracks.is_empty() {
         let keys = [
             ("⏎", "play"),
             ("a", "queue"),
             ("x", "remove"),
             ("G", "menu"),
+            ("\\", "filter"),
             ("←", "back"),
         ];
         if let Some(h) = hints(&keys, area.width) {
@@ -580,11 +706,24 @@ fn draw_open_playlist(f: &mut Frame, app: &mut App, area: Rect, name: &str) {
             ],
         );
     }
+    if shown == 0 {
+        let text = no_matches(filter.as_ref());
+        return empty_hint(f, block, area, &["", text.as_str(), "Esc clears the filter."]);
+    }
     let show_album = area.width >= 76;
     let liked = app.store.liked_ids();
-    let rows = track_rows(tracks, playing, show_album, &liked);
+    let rows = track_rows(tracks, visible, playing, show_album, &liked);
     let table = track_table(rows, show_album, block, app.accent);
-    f.render_stateful_widget(table, area, &mut app.pl_state);
+    let selected = app.selected();
+    render_table(
+        f,
+        table,
+        area,
+        &mut app.pl_state,
+        visible,
+        selected,
+        &mut app.filter_offset,
+    );
 }
 
 fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
@@ -596,11 +735,20 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
     let [left, right] =
         Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(area);
 
+    let filter = app.filter_view();
+    let visible = filter.as_ref().and_then(|fv| fv.rows.as_deref());
+    let total = app.store.playlists.len();
+    let shown = visible.map_or(total, <[usize]>::len);
     let mut block = Block::bordered()
-        .title(format!(" Playlists ({}) ", app.store.playlists.len()))
+        .title(format!(" Playlists ({}) ", count_label(shown, total)))
         .border_style(Style::new().fg(app.accent));
-    if !app.store.playlists.is_empty() {
-        if let Some(h) = hints(&[("⏎", "load"), ("→", "open"), ("G", "menu")], left.width) {
+    if let Some(fv) = filter.as_ref() {
+        block = block.title_bottom(filter_footer(fv, shown, total, app.accent));
+    } else if !app.store.playlists.is_empty() {
+        if let Some(h) = hints(
+            &[("⏎", "load"), ("→", "open"), ("G", "menu"), ("\\", "filter")],
+            left.width,
+        ) {
             block = block.title_bottom(h);
         }
     }
@@ -622,11 +770,25 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
+    if shown == 0 {
+        let text = no_matches(filter.as_ref());
+        empty_hint(f, block, left, &["", text.as_str(), "Esc clears the filter."]);
+        f.render_widget(
+            Block::bordered().title(" Preview ").border_style(dim()),
+            right,
+        );
+        return;
+    }
+
     let names = app.store.names();
-    let rows: Vec<Row> = names
+    let order: Vec<usize> = match visible {
+        Some(rows) => rows.to_vec(),
+        None => (0..names.len()).collect(),
+    };
+    let rows: Vec<Row> = order
         .iter()
-        .enumerate()
-        .map(|(i, &name)| {
+        .filter_map(|&i| names.get(i).map(|&name| (i, name)))
+        .map(|(i, name)| {
             let count = app.store.playlists.get(name).map_or(0, Vec::len);
             let name_cell = if name == LIKED_SONGS {
                 Cell::from(Line::from(vec![
@@ -655,9 +817,17 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
     .block(block)
     .row_highlight_style(selected_style(app.accent))
     .highlight_symbol(CURSOR);
-    f.render_stateful_widget(table, left, &mut app.states[View::Playlists.idx()]);
-
     let sel = app.selected();
+    render_table(
+        f,
+        table,
+        left,
+        &mut app.states[View::Playlists.idx()],
+        visible,
+        sel,
+        &mut app.filter_offset,
+    );
+
     let preview_block = Block::bordered().title(" Preview ").border_style(dim());
     match app
         .playlist_name(sel)
@@ -666,7 +836,7 @@ fn draw_playlists(f: &mut Frame, app: &mut App, area: Rect) {
         Some(tracks) if !tracks.is_empty() => {
             let show_album = right.width >= 70;
             let liked = app.store.liked_ids();
-            let rows = track_rows(tracks, None, show_album, &liked);
+            let rows = track_rows(tracks, None, None, show_album, &liked);
             f.render_widget(
                 track_table(rows, show_album, preview_block, app.accent),
                 right,
@@ -1521,6 +1691,7 @@ const CMD_INFO: &[(&str, &str)] = &[
     ),
     ("playlist", "search YouTube Music playlists"),
     ("lyrics", "show or hide the lyrics panel"),
+    ("filter", "filter the list on screen  ·  filter [text]"),
     ("help", "show key bindings"),
 ];
 
@@ -1821,6 +1992,7 @@ const HELP_START: HelpEntries = &[
     ("Space", "pause / resume"),
     ("a", "add the selected song to the queue"),
     ("G", "open the song menu"),
+    ("\\", "filter the list you are looking at"),
     (":", "command palette (see the Commands page)"),
     ("?", "open this help"),
     ("q", "quit"),
@@ -1837,6 +2009,10 @@ const HELP_NAV: HelpEntries = &[
     ("j k / ↓ ↑", "move (counts work: 5j)"),
     ("gg  ge  Home  End", "top / bottom (5gg or 5ge → row 5)"),
     ("Ctrl-d  Ctrl-u", "half page down / up"),
+    (
+        "\\  F4  or  :filter",
+        "filter the list on screen as you type: ⏎ keeps the filter, Esc clears it. Works in every list, inside albums and playlists too",
+    ),
     ("Tab  S-Tab", "cycle Results / Queue / Playlists / History"),
     ("Q", "show or hide the queue sidebar"),
     (
@@ -1967,6 +2143,7 @@ const HELP_CMDS: HelpEntries = &[
     (":similar", "same as gs (also :radio)"),
     (":album [q]", "same as gb, or search albums"),
     (":lyrics", "same as L"),
+    (":filter [text]", "filter the list on screen; :filter alone clears it"),
     (":quit  (or q, Ctrl-c)", ""),
 ];
 

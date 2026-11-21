@@ -54,6 +54,7 @@ pub enum Command {
     Similar,
     Album(Option<String>),
     PlaylistSearch(String),
+    Filter(Option<String>),
     Lyrics,
     Help,
 }
@@ -98,6 +99,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "similar",
     "album",
     "playlist",
+    "filter",
     "lyrics",
     "help",
 ];
@@ -251,6 +253,7 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
             }
             PlaylistSearch(arg.to_string())
         }
+        "filter" | "fl" => Filter((!arg.is_empty()).then(|| arg.to_string())),
         "lyrics" | "ly" => Lyrics,
         "help" | "h" => Help,
         other => return Err(format!("unknown command: :{other}  (try :help)")),
@@ -347,6 +350,20 @@ mod tests {
         assert_eq!(parse("playlists"), Ok(Some(Command::ShowPlaylists)));
         assert_eq!(parse("history"), Ok(Some(Command::ShowRecent)));
         assert_eq!(parse("mostplayed"), Ok(Some(Command::ShowMostPlayed)));
+    }
+
+    #[test]
+    fn filter_command() {
+        assert_eq!(parse("filter"), Ok(Some(Command::Filter(None))));
+        assert_eq!(
+            parse("filter daft punk"),
+            Ok(Some(Command::Filter(Some("daft punk".into()))))
+        );
+        assert_eq!(
+            parse(r#":fl "lo-fi""#),
+            Ok(Some(Command::Filter(Some("lo-fi".into()))))
+        );
+        assert!(COMMAND_NAMES.contains(&"filter"));
     }
 
     #[test]

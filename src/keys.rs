@@ -40,6 +40,7 @@ pub enum Action {
     Shuffle,
     Repeat,
     Search,
+    Filter,
     Command,
     LyricsPanel,
     Lyrics,
@@ -91,6 +92,7 @@ const DEFAULTS: &[(&str, Action, &[&str])] = &[
     ("shuffle", Action::Shuffle, &["s"]),
     ("repeat", Action::Repeat, &["r"]),
     ("search", Action::Search, &["/"]),
+    ("filter", Action::Filter, &["\\", "f4"]),
     ("command", Action::Command, &[":"]),
     ("lyrics_panel", Action::LyricsPanel, &["L"]),
     ("lyrics", Action::Lyrics, &["F"]),
@@ -345,6 +347,9 @@ mod tests {
         assert_eq!(run(&map, "Q"), Some(Action::ToggleQueueSidebar));
         assert_eq!(run(&map, "space"), Some(Action::Pause));
         assert_eq!(run(&map, "f"), Some(Action::Like));
+        assert_eq!(run(&map, "\\"), Some(Action::Filter));
+        assert_eq!(run(&map, "f4"), Some(Action::Filter));
+        assert_eq!(run(&map, "/"), Some(Action::Search));
         assert!(matches!(map.lookup(&seq("g")), Lookup::Pending));
         assert!(matches!(map.lookup(&seq("gz")), Lookup::Nothing));
     }

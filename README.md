@@ -68,6 +68,7 @@ Press `Enter` to play, `a` to queue, `f` to like a song and `?` for every keybin
 - **Queue and playlists:** build a queue, save and reorder playlists, or import any YouTube / YouTube Music playlist by URL
 - **Liked Songs:** press `f` to heart a song. Liked songs get a ♥ everywhere and are collected in their own playlist
 - **Listening history:** Recently Played and Most Played tabs, with persistent play counts
+- **Filter any list:** press `\` to narrow Results, an album, a playlist, the queue or history as you type; `/` still searches YouTube Music
 - **Discovery:** `ga` for an artist's songs, `gs` for similar songs, `gb` for the album, and `:album` / `:playlist` to search for albums and playlists
 - **Song menu and command palette:** `G` for per-song actions, and `:` for commands like `:search`, `:seek`, `:vol` and `:import`, with completion and history
 - **Downloads:** save songs, albums or playlists as audio files
@@ -188,8 +189,21 @@ These are the defaults. You can change them, see [Custom keys](#custom-keys).
 | `L` | toggle the lyrics panel |
 | `F` | cycle fullscreen lyrics → cover art and lyrics → player |
 | `/` `:` | search / command line |
+| `\` `F4` | filter the list on screen (see below) |
 | `?` | help |
 | `q` | quit |
+
+## Filtering a list
+
+`/` searches YouTube Music. To find something in a list you already have open (an album, a playlist, your queue, history, or a page of search results), press `\` (or `F4`) and type. Rows that don't match disappear as you type.
+
+- Every word has to match the title, artist or album, in any order and ignoring case: `daft home` finds Homework by Daft Punk.
+- `Enter` keeps the filter so you can move with `j`/`k` and play, queue or open the menu on what is shown. `Esc` clears it, and the cursor stays on the song you were on.
+- `A`, `P`, `gD` and playback follow the filter: queueing all, playing from a row and downloading all use only the matching rows, and playback continues through them.
+- A filter belongs to the list it was typed in. Switching tabs, opening or closing a playlist and new search results all clear it. Row numbers stay the ones from the full list.
+- Rows cannot be reordered while a filter hides some of them.
+- Searching only covers the results that are loaded so far.
+- `:filter text` does the same from the command line, and `:filter` alone clears it.
 
 ## Commands
 
@@ -375,7 +389,7 @@ A key is a character (`"x"`, `"G"`, `"/"`), a name (`space`, `enter`, `esc`, `ta
 | `go_artist` `go_similar` `go_album` `save_album` | `ga` / `gs` / `gb` / `gB` |
 | `download` `download_selected` `download_all` | `D` / `gd` / `gD` |
 | `lyrics_panel` `lyrics` | `L` / `F` |
-| `search` `command` | `/` / `:` |
+| `search` `filter` `command` | `/` / `\` `f4` / `:` |
 | `help` | `?` |
 | `quit` | `q` |
 | `back` | `backspace` `esc` |

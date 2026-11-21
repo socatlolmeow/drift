@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Filter the list on screen with `\` (or `F4`, or `:filter text`): albums,
+  playlists, search results, the queue and history narrow as you type. Every
+  word must match the title, artist or album. `Enter` keeps the filter, `Esc`
+  clears it. Queue all, play all, download all and playback follow the rows
+  that are shown. `/` still searches YouTube Music. Rebind it with the new
+  `filter` action.
 - Last.fm scrobbling. Set `api_key` and `api_secret` under the new `[lastfm]`
   section, then run `drift --lastfm-login` once (`--lastfm-logout` signs out).
   Plays are scrobbled by Last.fm's rules, the current song is sent as "now
