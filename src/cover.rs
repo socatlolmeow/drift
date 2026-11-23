@@ -77,11 +77,14 @@ pub fn fetch(id: &str) -> Option<RgbImage> {
         return None;
     }
     let response = ureq::get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))
-        .timeout(Duration::from_secs(10))
+        .config()
+        .timeout_global(Some(Duration::from_secs(10)))
+        .build()
         .call()
         .ok()?;
     let mut bytes = Vec::new();
     response
+        .into_body()
         .into_reader()
         .take(2 * 1024 * 1024)
         .read_to_end(&mut bytes)

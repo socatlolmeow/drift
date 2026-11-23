@@ -110,17 +110,20 @@ fn pick(entries: &[Value], duration: Option<u32>) -> Option<Lyrics> {
 }
 
 fn query(params: &[(&str, &str)]) -> Result<Vec<Value>, String> {
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(10))
-        .user_agent(UA)
-        .build();
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(10)))
+            .user_agent(UA)
+            .build(),
+    );
     let mut req = agent.get(SEARCH);
     for (k, v) in params {
         req = req.query(k, v);
     }
     req.call()
         .map_err(|e| e.to_string())?
-        .into_json::<Vec<Value>>()
+        .into_body()
+        .read_json::<Vec<Value>>()
         .map_err(|e| e.to_string())
 }
 
