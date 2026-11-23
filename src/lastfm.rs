@@ -167,10 +167,15 @@ struct Client {
 }
 
 fn build_agent(timeout: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout(timeout)
-        .user_agent(UA)
-        .build()
+    // Last.fm explains rejections in the JSON body of non-2xx responses, so
+    // statuses must come back as responses instead of `Error::StatusCode`.
+    ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(timeout))
+            .user_agent(UA)
+            .http_status_as_error(false)
+            .build(),
+    )
 }
 
 impl Client {
@@ -201,33 +206,29 @@ impl Client {
             .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
-        match self.agent.post(API_URL).send_form(&form) {
-            Ok(response) => {
-                let body: Value = response
-                    .into_json()
-                    .map_err(|e| ApiError::Temporary(format!("bad response: {e}")))?;
-                match ApiError::from_body(&body) {
-                    Some(err) => Err(err),
-                    None => Ok(body),
-                }
-            }
-            Err(ureq::Error::Status(status, response)) => {
-                if let Some(err) = response
-                    .into_json::<Value>()
-                    .ok()
-                    .and_then(|body| ApiError::from_body(&body))
-                {
-                    return Err(err);
-                }
-                let text = format!("HTTP {status}");
-                Err(if status >= 500 {
-                    ApiError::Temporary(text)
-                } else {
-                    ApiError::Rejected(text)
-                })
-            }
-            Err(e) => Err(ApiError::Temporary(e.to_string())),
+        let mut response = self
+            .agent
+            .post(API_URL)
+            .send_form(form)
+            .map_err(|e| ApiError::Temporary(e.to_string()))?;
+        let status = response.status();
+        let body = response.body_mut().read_json::<Value>();
+        if status.is_success() {
+            let body = body.map_err(|e| ApiError::Temporary(format!("bad response: {e}")))?;
+            return match ApiError::from_body(&body) {
+                Some(err) => Err(err),
+                None => Ok(body),
+            };
         }
+        if let Some(err) = body.ok().and_then(|body| ApiError::from_body(&body)) {
+            return Err(err);
+        }
+        let text = format!("HTTP {}", status.as_u16());
+        Err(if status.is_server_error() {
+            ApiError::Temporary(text)
+        } else {
+            ApiError::Rejected(text)
+        })
     }
 
     fn now_playing(&self, play: &Scrobble) -> Result<(), ApiError> {

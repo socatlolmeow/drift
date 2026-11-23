@@ -227,10 +227,12 @@ fn find_continuation(v: &Value) -> Option<String> {
 fn agent() -> &'static ureq::Agent {
     static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
-        ureq::AgentBuilder::new()
-            .timeout(Duration::from_secs(12))
-            .user_agent(UA)
-            .build()
+        ureq::Agent::new_with_config(
+            ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(12)))
+                .user_agent(UA)
+                .build(),
+        )
     })
 }
 
@@ -243,12 +245,13 @@ fn post(url: &str, mut body: Value) -> Result<Value> {
     }});
     let resp = agent()
         .post(url)
-        .set("Origin", "https://music.youtube.com")
-        .set("Referer", "https://music.youtube.com/")
-        .set("Cookie", "SOCS=CAI")
+        .header("Origin", "https://music.youtube.com")
+        .header("Referer", "https://music.youtube.com/")
+        .header("Cookie", "SOCS=CAI")
         .send_json(body)
         .map_err(|e| anyhow!("request failed: {e}"))?;
-    resp.into_json::<Value>()
+    resp.into_body()
+        .read_json::<Value>()
         .context("invalid JSON from YouTube Music")
 }
 
