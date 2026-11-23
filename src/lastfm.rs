@@ -695,13 +695,29 @@ impl Drop for Scrobbler {
     }
 }
 
-pub fn login(config: &LastfmConfig) -> Result<()> {
-    let Some((api_key, api_secret)) = config.credentials() else {
+pub struct LoginTicket {
+    token: String,
+    url: String,
+}
+
+impl LoginTicket {
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+}
+
+fn credentials(config: &LastfmConfig) -> Result<(&str, &str)> {
+    let Some(pair) = config.credentials() else {
         bail!(
             "set api_key and api_secret under [lastfm] in config.toml first \
              (create them at {SIGNUP_URL})"
         );
     };
+    Ok(pair)
+}
+
+pub fn begin_login(config: &LastfmConfig) -> Result<LoginTicket> {
+    let (api_key, api_secret) = credentials(config)?;
     let client = Client::new(api_key, api_secret, None);
 
     let body = client
@@ -711,15 +727,16 @@ pub fn login(config: &LastfmConfig) -> Result<()> {
         .as_str()
         .ok_or_else(|| anyhow!("Last.fm sent no token"))?
         .to_string();
+    let url = format!("{AUTH_URL}?api_key={api_key}&token={token}");
+    Ok(LoginTicket { token, url })
+}
 
-    println!("Open this link, sign in and allow drift access:\n");
-    println!("  {AUTH_URL}?api_key={api_key}&token={token}\n");
-    print!("Press Enter here once you have allowed it.... ");
-    io::stdout().flush()?;
-    io::stdin().lock().read_line(&mut String::new())?;
+pub fn finish_login(config: &LastfmConfig, ticket: &LoginTicket) -> Result<String> {
+    let (api_key, api_secret) = credentials(config)?;
+    let client = Client::new(api_key, api_secret, None);
 
     let mut params = BTreeMap::new();
-    params.insert("token".to_string(), token);
+    params.insert("token".to_string(), ticket.token.clone());
     let body = client
         .call("auth.getSession", params)
         .context("Finishing the login (did you allow Access?)")?;
@@ -733,6 +750,19 @@ pub fn login(config: &LastfmConfig) -> Result<()> {
         session_key: session_key.to_string(),
     }
     .save()?;
+    Ok(username.to_string())
+}
+
+pub fn login(config: &LastfmConfig) -> Result<()> {
+    let ticket = begin_login(config)?;
+
+    println!("Open this link, sign in and allow drift access:\n");
+    println!("  {}\n", ticket.url());
+    print!("Press Enter here once you have allowed it.... ");
+    io::stdout().flush()?;
+    io::stdin().lock().read_line(&mut String::new())?;
+
+    let username = finish_login(config, &ticket)?;
     println!("Sucessfully signed in to Last.fm as {username}. ");
     Ok(())
 }

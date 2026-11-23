@@ -111,7 +111,6 @@ pub struct Audio {
     pub stream_client: String,
 }
 
-#[cfg(unix)]
 impl Default for Audio {
     fn default() -> Self {
         Audio {

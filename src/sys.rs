@@ -1,6 +1,6 @@
 //! Small platform shims so the rest of the app stays free of `cfg` noise.
 
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 /// Keep child processes from flashing a console window on Windows.
 pub fn no_window(cmd: &mut Command) -> &mut Command {
@@ -11,6 +11,39 @@ pub fn no_window(cmd: &mut Command) -> &mut Command {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
     cmd
+}
+
+pub fn open_url(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = Command::new("open");
+        c.arg(url);
+        c
+    };
+    #[cfg(windows)]
+    let mut cmd = {
+        let mut c = Command::new("rundll32");
+        c.args(["url.dll,FileProtocolHandler", url]);
+        c
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let mut cmd = {
+        let mut c = Command::new("xdg-open");
+        c.arg(url);
+        c
+    };
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    match no_window(&mut cmd).spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Windows: make sure `child` is killed when drift exits, even if drift

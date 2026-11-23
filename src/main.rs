@@ -12,6 +12,7 @@ mod model;
 mod mpris;
 mod player;
 mod session;
+mod setup;
 mod store;
 mod sys;
 mod ui;
@@ -127,6 +128,18 @@ fn main() -> ExitCode {
         }
         Some("--lastfm-logout") => return exit_code(lastfm::logout()),
         _ => {}
+    }
+
+    if setup::needed() {
+        let tools = [
+            ("mpv", tool_version("mpv")),
+            ("yt-dlp", tool_version("yt-dlp")),
+        ];
+        match setup::run(&tools) {
+            Ok(setup::Outcome::Quit) => return ExitCode::SUCCESS,
+            Ok(_) => {}
+            Err(e) => eprintln!("warning: setup failed: {e:#}"),
+        }
     }
 
     let missing = missing_dependencies(false);
