@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Plays are scrobbled by Last.fm's rules, the current song is sent as "now
   playing", and scrobbles that cannot be delivered are queued on disk and
   retried.
+- First-run setup. When there is no `config.toml`, drift opens a short
+  full-screen setup that asks for the accent color, volume, session restore,
+  streaming or downloading, the download folder, browser cookies, Last.fm
+  (including sign-in) and Discord presence. It then writes `config.toml` and
+  starts the player. Every question has a default, and `Esc` on the first
+  screen skips the setup.
 - `:speed` (alias `:spd`) sets the playback speed: `:speed 1.25`, `:speed +0.25`,
   `:speed reset`. The range is 0.25x to 4x, pitch is kept, and the speed stays
   for the rest of the session.
