@@ -12,13 +12,15 @@ use crate::model::{fmt_time, Track};
 use crate::store::LIKED_SONGS;
 use ratatui_image::{Resize, StatefulImage};
 
-/* The three ways lyrics get drawn: the side panel, centered fullscreen, and
-the left-aligned column next to the cover art. */
+/* The four ways lyrics get drawn: the side panel, centered fullscreen, the
+left-aligned column next to the cover art, and the small centered window
+under the cover in the stage view. */
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LyricsLayout {
     Panel,
     Full,
     Cover,
+    Stage,
 }
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -54,7 +56,7 @@ fn dim() -> Style {
 
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
-    let artwork_mode = app.mode == Mode::LyricsArtwork;
+    let artwork_mode = app.mode.shows_cover();
     let [top, body, playing] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(3),
@@ -71,7 +73,11 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 body.width,
                 area.bottom().saturating_sub(body.y),
             );
-            draw_lyrics_artwork(f, app, artwork);
+            if app.mode == Mode::LyricsStage {
+                draw_lyrics_stage(f, app, artwork);
+            } else {
+                draw_lyrics_artwork(f, app, artwork);
+            }
         } else {
             draw_lyrics(f, app, body, LyricsLayout::Full);
         }
@@ -852,10 +858,10 @@ fn draw_lyrics_header(f: &mut Frame, app: &App, area: Rect) {
     let mut title = vec![
         Span::styled(" Drift", Style::new().fg(app.accent).bold()),
         Span::styled(
-            if app.mode == Mode::LyricsArtwork {
-                "  ·  Lyrics / cover"
-            } else {
-                "  ·  Lyrics"
+            match app.mode {
+                Mode::LyricsArtwork => "  ·  Lyrics / cover",
+                Mode::LyricsStage => "  ·  Stage",
+                _ => "  ·  Lyrics",
             },
             dim(),
         ),
@@ -877,10 +883,10 @@ fn draw_lyrics_header(f: &mut Frame, app: &App, area: Rect) {
     }
     keys.push((
         "F",
-        if app.mode == Mode::LyricsArtwork {
-            "close"
-        } else {
-            "cover view"
+        match app.mode {
+            Mode::Lyrics => "cover view",
+            Mode::LyricsArtwork => "stage view",
+            _ => "close",
         },
     ));
     keys.push(("Esc", "close"));
@@ -897,6 +903,119 @@ fn draw_lyrics_artwork(f: &mut Frame, app: &mut App, area: Rect) {
             .areas(area);
     draw_cover_track(f, app, track);
     draw_lyrics(f, app, lyrics, LyricsLayout::Cover);
+}
+
+/* Third fullscreen view: a centered "now playing poster". Cover on top, then
+the title, artist and progress bar, and a small window of lyrics below it
+with the current line in the middle. Whatever doesn't fit is dropped: the
+cover goes first, then the lyric window shrinks. */
+fn draw_lyrics_stage(f: &mut Frame, app: &mut App, area: Rect) {
+    if area.is_empty() {
+        return;
+    }
+    let Some(track) = app
+        .now_track()
+        .filter(|_| app.play_state != PlayState::Stopped)
+        .cloned()
+    else {
+        // draw_lyrics prints the "Nothing playing" notice
+        draw_lyrics(f, app, area, LyricsLayout::Stage);
+        return;
+    };
+
+    // title, artist, gap, bar, times, rule
+    const TEXT_ROWS: u16 = 6;
+    let col_w = area.width.saturating_sub(6).clamp(1, 60);
+    let lyric_h = area.height.saturating_sub(TEXT_ROWS).min(5);
+    // one more row for the gap under the cover; cells are twice as tall as
+    // wide, so a square cover is at most col_w / 2 rows
+    let room = area.height.saturating_sub(TEXT_ROWS + lyric_h + 1);
+    let art_h = room.min(col_w / 2).min(16);
+    let art_h = if art_h >= 4 { art_h } else { 0 };
+    let gap = u16::from(art_h > 0);
+    let total = (art_h + gap + TEXT_ROWS + lyric_h).min(area.height);
+    let col = Rect::new(
+        area.x + (area.width - col_w) / 2,
+        area.y + (area.height - total) / 2,
+        col_w,
+        total,
+    );
+    let [art, _, title_row, artist_row, _, bar_row, time_row, rule_row, lyric_area] =
+        Layout::vertical([
+            Constraint::Length(art_h),
+            Constraint::Length(gap),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(lyric_h),
+        ])
+        .areas(col);
+
+    // the cover and the progress bar share a width, narrower than the lyrics
+    let info_w = (art_h * 2).max(30).min(col_w);
+    let info_x = col.x + (col_w - info_w) / 2;
+    let narrow = |r: Rect| Rect::new(info_x, r.y, info_w, r.height);
+
+    draw_cover_art(f, app, &track.id, narrow(art), col);
+
+    // title, centered, with the heart just after it
+    let title = truncate_cells(&track.title, (title_row.width as usize).saturating_sub(4));
+    let title_w = title.chars().count() as u16;
+    f.render_widget(
+        Paragraph::new(Line::styled(title, Style::new().fg(Color::White).bold()))
+            .alignment(Alignment::Center),
+        title_row,
+    );
+    if title_row.width >= 16 {
+        let heart_x = title_row.x + (title_row.width - title_w) / 2 + title_w + 2;
+        if heart_x < title_row.right() {
+            let heart = if app.store.is_liked(&track.id) {
+                Span::styled(HEART, liked_style())
+            } else {
+                Span::styled("♡", Style::new().fg(Color::Gray))
+            };
+            f.render_widget(
+                Paragraph::new(Line::from(heart)),
+                Rect::new(heart_x, title_row.y, 1, 1),
+            );
+        }
+    }
+
+    // artist in the accent color, album dimmed
+    let width = artist_row.width as usize;
+    let artists = truncate_cells(&track.artist_names().join(", "), width);
+    let left = width.saturating_sub(artists.chars().count());
+    let mut by_line = vec![Span::styled(artists, Style::new().fg(app.accent))];
+    if let Some(album) = track.album.as_deref().filter(|a| !a.is_empty()) {
+        if left > 4 {
+            by_line.push(Span::styled(
+                truncate_cells(&format!(" · {album}"), left),
+                dim(),
+            ));
+        }
+    }
+    f.render_widget(
+        Paragraph::new(Line::from(by_line)).alignment(Alignment::Center),
+        artist_row,
+    );
+
+    draw_progress(f, app, &track, narrow(bar_row), narrow(time_row));
+
+    if lyric_h > 0 {
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("─── ", dim()),
+                Span::styled("♪", Style::new().fg(app.accent)),
+                Span::styled(" ───", dim()),
+            ]))
+            .alignment(Alignment::Center),
+            rule_row,
+        );
+    }
+    draw_lyrics(f, app, lyric_area, LyricsLayout::Stage);
 }
 
 /* Average color of one cell in a gw x gh grid laid over the image. */
@@ -1271,7 +1390,7 @@ fn lyric_rows(
 
 fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, layout: LyricsLayout) {
     let full = layout != LyricsLayout::Panel;
-    let inner = if layout == LyricsLayout::Cover {
+    let inner = if matches!(layout, LyricsLayout::Cover | LyricsLayout::Stage) {
         area
     } else if full {
         let w = area.width.saturating_sub(4).min(76);
@@ -1338,8 +1457,8 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, layout: LyricsLayout) {
         lyrics,
         app.position,
         inner.width as usize,
-        full,
-        layout == LyricsLayout::Cover,
+        matches!(layout, LyricsLayout::Full | LyricsLayout::Cover),
+        matches!(layout, LyricsLayout::Cover | LyricsLayout::Stage),
         app.accent,
     );
     let height = inner.height as usize;
@@ -1352,7 +1471,7 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, layout: LyricsLayout) {
     .min(max_start);
     app.lyrics_scroll = start;
     let visible: Vec<Line> = rows.into_iter().skip(start).take(height).collect();
-    let align = if layout == LyricsLayout::Full {
+    let align = if matches!(layout, LyricsLayout::Full | LyricsLayout::Stage) {
         Alignment::Center
     } else {
         Alignment::Left
@@ -1859,7 +1978,7 @@ const HELP_PLAY: HelpEntries = &[
     ("s  r", "toggle shuffle / cycle repeat"),
     (
         "L  F",
-        "lyrics panel / cycle fullscreen lyrics + cover (Esc closes)",
+        "lyrics panel / cycle fullscreen lyrics, cover and stage views (Esc closes)",
     ),
     (
         "ga  or  :artist",
@@ -2396,6 +2515,23 @@ mod tests {
         term.draw(|f| draw(f, app)).unwrap();
         assert_eq!(app.lyrics_scroll, 1);
         for (width, height) in [(80, 24), (50, 20)] {
+            let mut small = Terminal::new(TestBackend::new(width, height)).unwrap();
+            small.draw(|f| draw(f, app)).unwrap();
+        }
+
+        // The third `F` opens the stage view: centered cover, details and a
+        // small lyric window, with no bottom player bar.
+        press(app, KeyCode::Char('F'));
+        assert!(app.mode == Mode::LyricsStage);
+        let mut stage = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        stage.draw(|f| draw(f, app)).unwrap();
+        assert!(text(&stage).contains("Cover Song"));
+        assert!(text(&stage).contains("First Artist, Second Artist"));
+        assert!(text(&stage).contains("0:27") && text(&stage).contains("-1:03"));
+        assert!(text(&stage).contains("Verse"));
+        assert!(text(&stage).contains("Cover art unavailable"));
+        assert!(!text(&stage).contains("Now Playing"));
+        for (width, height) in [(80, 24), (50, 20), (40, 10)] {
             let mut small = Terminal::new(TestBackend::new(width, height)).unwrap();
             small.draw(|f| draw(f, app)).unwrap();
         }
