@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A third fullscreen layout, the stage view: press `F` once more after the
+  cover view to get a centered cover, title, artist and progress bar with a
+  small fading window of lyrics underneath. `F` now cycles lyrics, cover,
+  stage, then back to the player.
 - Last.fm scrobbling. Set `api_key` and `api_secret` under the new `[lastfm]`
   section, then run `drift --lastfm-login` once (`--lastfm-logout` signs out).
   Plays are scrobbled by Last.fm's rules, the current song is sent as "now

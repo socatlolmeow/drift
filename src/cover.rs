@@ -71,11 +71,22 @@ pub fn supports_protocol(protocol: ProtocolType) -> bool {
     matches!(protocol, ProtocolType::Kitty | ProtocolType::Iterm2)
 }
 
-/// Use the same track artwork as Discord, with a small decoded image kept in memory.
-pub fn fetch(id: &str) -> Option<RgbImage> {
-    if !is_valid_id(id) {
-        return None;
-    }
+/// How many times a cover download is tried before giving up.
+const ATTEMPTS: u32 = 3;
+
+/// A JPEG that got cut off mid-download still decodes: the decoder fills in
+/// what's missing, so you'd see only the top of the cover. A complete file
+/// starts with the SOI marker and ends with the EOI marker (maybe followed
+/// by a few padding bytes), so anything else gets thrown away.
+fn is_complete_jpeg(bytes: &[u8]) -> bool {
+    bytes.len() > 4
+        && bytes[..2] == [0xFF, 0xD8]
+        && bytes[bytes.len().saturating_sub(64)..]
+            .windows(2)
+            .any(|pair| pair == [0xFF, 0xD9])
+}
+
+fn download(id: &str) -> Option<Vec<u8>> {
     let response = ureq::get(&format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"))
         .config()
         .timeout_global(Some(Duration::from_secs(10)))
@@ -89,6 +100,21 @@ pub fn fetch(id: &str) -> Option<RgbImage> {
         .take(2 * 1024 * 1024)
         .read_to_end(&mut bytes)
         .ok()?;
+    is_complete_jpeg(&bytes).then_some(bytes)
+}
+
+/// Use the same track artwork as Discord, with a small decoded image kept in memory.
+pub fn fetch(id: &str) -> Option<RgbImage> {
+    if !is_valid_id(id) {
+        return None;
+    }
+    // this runs on its own thread, so waiting between tries is fine
+    let bytes = (0..ATTEMPTS).find_map(|attempt| {
+        if attempt > 0 {
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        download(id)
+    })?;
     let mut reader =
         image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Jpeg);
     let mut limits = image::Limits::default();
@@ -126,6 +152,18 @@ mod tests {
                 _ => panic!("unexpected graphics protocol state"),
             }
         }
+    }
+
+    #[test]
+    fn rejects_cut_off_jpegs() {
+        assert!(is_complete_jpeg(&[0xFF, 0xD8, 0x00, 0x01, 0x02, 0xFF, 0xD9]));
+        // trailing padding after the end marker is fine
+        assert!(is_complete_jpeg(&[0xFF, 0xD8, 0x00, 0x01, 0xFF, 0xD9, 0x00, 0x00]));
+        // cut off before the end marker
+        assert!(!is_complete_jpeg(&[0xFF, 0xD8, 0x00, 0x01, 0x02, 0x03]));
+        // not a JPEG at all, or empty
+        assert!(!is_complete_jpeg(b"<html>error</html>\xFF\xD9"));
+        assert!(!is_complete_jpeg(&[]));
     }
 
     #[test]

@@ -119,11 +119,17 @@ pub enum Mode {
     Info,
     Lyrics,
     LyricsArtwork,
+    LyricsStage,
 }
 
 impl Mode {
     pub fn is_lyrics(self) -> bool {
-        matches!(self, Self::Lyrics | Self::LyricsArtwork)
+        matches!(self, Self::Lyrics | Self::LyricsArtwork | Self::LyricsStage)
+    }
+
+    /* The fullscreen views that draw their own track details and cover. */
+    pub fn shows_cover(self) -> bool {
+        matches!(self, Self::LyricsArtwork | Self::LyricsStage)
     }
 }
 
@@ -654,7 +660,7 @@ impl App {
             Mode::ConfirmDelete => self.key_confirm_delete(key),
             Mode::Menu => self.key_menu(key),
             Mode::Info => self.key_info(key),
-            Mode::Lyrics | Mode::LyricsArtwork => self.key_lyrics(key),
+            Mode::Lyrics | Mode::LyricsArtwork | Mode::LyricsStage => self.key_lyrics(key),
             Mode::Normal => self.key_normal(key),
         }
     }
@@ -1158,10 +1164,10 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q' | 'L') => self.mode = Mode::Normal,
             KeyCode::Char('F') => {
-                self.mode = if self.mode == Mode::Lyrics {
-                    Mode::LyricsArtwork
-                } else {
-                    Mode::Normal
+                self.mode = match self.mode {
+                    Mode::Lyrics => Mode::LyricsArtwork,
+                    Mode::LyricsArtwork => Mode::LyricsStage,
+                    _ => Mode::Normal,
                 };
             }
             KeyCode::Char('D') => self.download(DownloadTarget::Current),
@@ -1216,7 +1222,7 @@ impl App {
     }
 
     fn sync_cover(&mut self) {
-        if self.mode != Mode::LyricsArtwork || self.play_state == PlayState::Stopped {
+        if !self.mode.shows_cover() || self.play_state == PlayState::Stopped {
             return;
         }
         let Some(id) = self.now_track().map(|track| track.id.clone()) else {
@@ -3226,7 +3232,12 @@ mod tests {
         app.close_menu();
 
         app.audio.download_dir.clear();
-        for mode in [Mode::Normal, Mode::Lyrics, Mode::LyricsArtwork] {
+        for mode in [
+            Mode::Normal,
+            Mode::Lyrics,
+            Mode::LyricsArtwork,
+            Mode::LyricsStage,
+        ] {
             app.mode = mode;
             app.status = None;
             press(app, KeyCode::Char('D'));
