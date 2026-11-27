@@ -202,6 +202,7 @@ pub enum MenuAction {
     OpenPlaylist,
     AppendPlaylist,
     DeletePlaylist,
+    RenamePlaylist,
 }
 
 #[derive(Clone)]
@@ -875,6 +876,11 @@ impl App {
                 MenuAction::AppendPlaylist,
             ));
             items.push(menu_item(
+                'r',
+                "Rename playlist",
+                MenuAction::RenamePlaylist,
+            ));
+            items.push(menu_item(
                 'x',
                 "Delete playlist…",
                 MenuAction::DeletePlaylist,
@@ -1078,6 +1084,12 @@ impl App {
             MenuAction::PickPlaylist(name) => self.add_to_playlist(&name),
             MenuAction::NewPlaylist => self.prefill_command("addto "),
             MenuAction::Remove | MenuAction::DeletePlaylist => self.delete_selected(),
+            MenuAction::RenamePlaylist => {
+                let Some(name) = self.playlist_name(self.selected()) else {
+                    return;
+                };
+                self.prefill_command(&format!("rename \"{name}\" ")); 
+            }
             MenuAction::Info => {
                 if let Some(t) = track {
                     self.info_track = Some(t);
@@ -1521,6 +1533,10 @@ impl App {
             },
             Command::DeletePlaylist(name) => match self.store.resolve(&name) {
                 Some(n) => self.delete_playlist(&n),
+                None => self.error(format!("no playlist named '{name}'")),
+            },
+            Command::RenamePlaylist(name, new_name) => match self.store.resolve(&name) {
+                Some(n) => self.rename_playlist(&n, &new_name),
                 None => self.error(format!("no playlist named '{name}'")),
             },
             Command::AddTo(name) => self.add_to_playlist(&name),
@@ -3090,6 +3106,28 @@ impl App {
             self.info(format!("Deleted playlist \u{201c}{name}\u{201d}"));
             let sel = self.selected();
             self.set_selected(sel);
+        }
+    }
+
+    fn rename_playlist(&mut self, name: &str, new_name: &str) {
+        if name == LIKED_SONGS {
+            return self.error("Liked Songs can't be renamed");
+        }
+        if self.store.resolve_exact(new_name).is_some_and(|n| n != name) {
+            return self.error(format!("Playlist \u{201c}{new_name}\u{201d} already exists"));
+        }
+        let Some(tracks) = self.store.playlists.remove(name) else { 
+            return self.error(format!("There is no playlist called \u{201c}{name}\u{201d}"));
+        };
+        self.store.playlists.insert(new_name.to_string(), tracks);
+        if self.view == View::Playlists && !self.in_playlist() {
+            let idx = self.store.names().iter().position(|n| *n == new_name); 
+            if let Some(i) = idx {
+                self.set_selected(i);
+            }
+        }
+        if self.persist() {
+            self.info(format!("Renamed \u{201c}{name}\u{201d} to \u{201c}{new_name}\u{201d}"));  
         }
     }
 }

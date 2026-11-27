@@ -1509,6 +1509,7 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("load", "load a playlist into the queue"),
     ("append", "append a playlist to the queue"),
     ("delpl", "delete a playlist"),
+    ("rename", "rename a playlist"),
     ("addto", "add the selected track to a playlist"),
     ("like", "add the selected song to Liked Songs"),
     ("unlike", "remove the selected song from Liked Songs"),

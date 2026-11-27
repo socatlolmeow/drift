@@ -6,3 +6,4 @@ Thanks to everyone who has helped build Drift.
 - [@olivr2346](https://github.com/olivr2346)
 - [@pnlt](https://github.com/pnlt)
 - [@wiizzl](https://github.com/wiizzl)
+- [@Milo](https://github.com/Milo-Posada)

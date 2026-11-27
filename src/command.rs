@@ -47,6 +47,7 @@ pub enum Command {
     Load(String),
     Append(String),
     DeletePlaylist(String),
+    RenamePlaylist(String, String),
     AddTo(String),
     Like(bool),
     Import(String),
@@ -90,6 +91,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "load",
     "append",
     "delpl",
+    "rename",
     "addto",
     "like",
     "unlike",
@@ -233,6 +235,16 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
         "load" | "e" => Load(name_arg(arg, "load")?),
         "append" => Append(name_arg(arg, "append")?),
         "delpl" | "deletepl" | "delete" => DeletePlaylist(name_arg(arg, "delpl")?),
+        "rename" => {
+            let (old, new) = match rest.strip_prefix('"') {
+                Some(r) => r.split_once('"').unwrap_or((r,"")),
+                None => rest.split_once('"').unwrap_or((rest,"")),
+            };
+            if old.is_empty() | new.is_empty() {
+                return Err("usage: :rename <playlist> <new name>".into());
+            }
+            RenamePlaylist(name_arg(old, "rename")?, name_arg(new, "rename")?)
+        },
         "addto" => AddTo(name_arg(arg, "addto")?),
         "like" | "love" => Like(true),
         "unlike" => Like(false),
