@@ -12,15 +12,16 @@ use crate::model::{fmt_time, Track};
 use crate::store::LIKED_SONGS;
 use ratatui_image::{Resize, StatefulImage};
 
-/* The four ways lyrics get drawn: the side panel, centered fullscreen, the
-left-aligned column next to the cover art, and the small centered window
-under the cover in the stage view. */
+/* The five ways lyrics get drawn: the side panel, centered fullscreen, the
+left-aligned column next to the cover art, the small centered window under
+the cover in the stage view, and the small left-aligned window in the card. */
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LyricsLayout {
     Panel,
     Full,
     Cover,
     Stage,
+    Card,
 }
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -73,10 +74,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 body.width,
                 area.bottom().saturating_sub(body.y),
             );
-            if app.mode == Mode::LyricsStage {
-                draw_lyrics_stage(f, app, artwork);
-            } else {
-                draw_lyrics_artwork(f, app, artwork);
+            match app.mode {
+                Mode::LyricsStage => draw_lyrics_stage(f, app, artwork),
+                Mode::LyricsCard => draw_lyrics_card(f, app, artwork),
+                _ => draw_lyrics_artwork(f, app, artwork),
             }
         } else {
             draw_lyrics(f, app, body, LyricsLayout::Full);
@@ -855,19 +856,23 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_lyrics_header(f: &mut Frame, app: &App, area: Rect) {
     let unsynced = matches!(&app.lyrics, LyricsState::Ready(l) if !l.synced);
-    let mut title = vec![
-        Span::styled(" Drift", Style::new().fg(app.accent).bold()),
-        Span::styled(
+    // the stage and card views stay clean, so they skip the "Drift · ..." title
+    let show_title = !matches!(app.mode, Mode::LyricsStage | Mode::LyricsCard);
+    let mut title = Vec::new();
+    if show_title {
+        title.push(Span::styled(" Drift", Style::new().fg(app.accent).bold()));
+        title.push(Span::styled(
             match app.mode {
                 Mode::LyricsArtwork => "  ·  Lyrics / cover",
-                Mode::LyricsStage => "  ·  Stage",
                 _ => "  ·  Lyrics",
             },
             dim(),
-        ),
-    ];
+        ));
+    }
     if unsynced {
-        title.push(Span::styled("  ·  not synced", dim()));
+        // still worth knowing about, even without the title
+        let note = if show_title { "  ·  not synced" } else { " not synced" };
+        title.push(Span::styled(note, dim()));
     }
     f.render_widget(Paragraph::new(Line::from(title)), area);
 
@@ -886,6 +891,7 @@ fn draw_lyrics_header(f: &mut Frame, app: &App, area: Rect) {
         match app.mode {
             Mode::Lyrics => "cover view",
             Mode::LyricsArtwork => "stage view",
+            Mode::LyricsStage => "card view",
             _ => "close",
         },
     ));
@@ -1016,6 +1022,127 @@ fn draw_lyrics_stage(f: &mut Frame, app: &mut App, area: Rect) {
         );
     }
     draw_lyrics(f, app, lyric_area, LyricsLayout::Stage);
+}
+
+/* Fourth fullscreen view: a wide "now playing card". The cover sits on the
+left; on the right are the playback state, the title, artist, album, a
+divider, a small window of lyrics and the progress bar. When the window is too small for that (or
+nothing is playing) it falls back to the stage view. */
+fn draw_lyrics_card(f: &mut Frame, app: &mut App, area: Rect) {
+    let avail_w = area.width.saturating_sub(4).min(110);
+    // cells are twice as tall as wide, so a square cover is 2 * rows wide;
+    // keep at least 32 columns for the text next to it
+    let rows = area
+        .height
+        .saturating_sub(2)
+        .min(18)
+        .min(avail_w.saturating_sub(3 + 32) / 2);
+    let track = app
+        .now_track()
+        .filter(|_| app.play_state != PlayState::Stopped)
+        .cloned();
+    let Some(track) = track.filter(|_| rows >= 12) else {
+        draw_lyrics_stage(f, app, area);
+        return;
+    };
+
+    let text_w = (avail_w - rows * 2 - 3).min(60);
+    let card_w = rows * 2 + 3 + text_w;
+    let card = Rect::new(
+        area.x + (area.width - card_w) / 2,
+        area.y + (area.height - rows) / 2,
+        card_w,
+        rows,
+    );
+    let [art, _, info] = Layout::horizontal([
+        Constraint::Length(rows * 2),
+        Constraint::Length(3),
+        Constraint::Length(text_w),
+    ])
+    .areas(card);
+    draw_cover_art(f, app, &track.id, art, art);
+
+    let [state_row, _, title_row, artist_row, album_row, rule_row, lyrics, _, bar_row, time_row] =
+        Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
+        .areas(info);
+
+    // what the player is doing, with the same glyphs as the player bar
+    let (marker, word, marker_style) = match app.play_state {
+        PlayState::Paused => ("⏸", "PAUSED", Style::new().fg(Color::Yellow)),
+        PlayState::Loading => ("…", "LOADING", dim()),
+        _ => ("▶", "PLAYING", Style::new().fg(app.accent)),
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(marker, marker_style),
+            Span::styled(format!("  {word}"), dim()),
+        ])),
+        state_row,
+    );
+
+    // title on the left, heart on the right edge
+    let [title_area, heart_area] =
+        Layout::horizontal([Constraint::Min(1), Constraint::Length(2)]).areas(title_row);
+    f.render_widget(
+        Paragraph::new(Line::styled(
+            truncate_cells(&track.title, title_area.width as usize),
+            Style::new().fg(Color::White).bold(),
+        )),
+        title_area,
+    );
+    let heart = if app.store.is_liked(&track.id) {
+        Span::styled(HEART, liked_style())
+    } else {
+        Span::styled("♡", Style::new().fg(Color::Gray))
+    };
+    f.render_widget(
+        Paragraph::new(Line::from(heart)).alignment(Alignment::Right),
+        heart_area,
+    );
+
+    f.render_widget(
+        Paragraph::new(Line::styled(
+            truncate_cells(&track.artist_names().join(", "), artist_row.width as usize),
+            Style::new().fg(Color::Gray),
+        )),
+        artist_row,
+    );
+    if let Some(album) = track.album.as_deref().filter(|a| !a.is_empty()) {
+        f.render_widget(
+            Paragraph::new(Line::styled(
+                truncate_cells(album, album_row.width as usize),
+                dim().italic(),
+            )),
+            album_row,
+        );
+    }
+
+    // divider: a short accent stub on a dim line
+    let stub = 6.min(rule_row.width as usize);
+    f.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("━".repeat(stub), Style::new().fg(app.accent)),
+            Span::styled(
+                "─".repeat((rule_row.width as usize).saturating_sub(stub)),
+                dim(),
+            ),
+        ])),
+        rule_row,
+    );
+
+    draw_lyrics(f, app, lyrics, LyricsLayout::Card);
+    draw_progress(f, app, &track, bar_row, time_row);
 }
 
 /* Average color of one cell in a gw x gh grid laid over the image. */
@@ -1390,7 +1517,10 @@ fn lyric_rows(
 
 fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, layout: LyricsLayout) {
     let full = layout != LyricsLayout::Panel;
-    let inner = if matches!(layout, LyricsLayout::Cover | LyricsLayout::Stage) {
+    let inner = if matches!(
+        layout,
+        LyricsLayout::Cover | LyricsLayout::Stage | LyricsLayout::Card
+    ) {
         area
     } else if full {
         let w = area.width.saturating_sub(4).min(76);
@@ -1458,7 +1588,10 @@ fn draw_lyrics(f: &mut Frame, app: &mut App, area: Rect, layout: LyricsLayout) {
         app.position,
         inner.width as usize,
         matches!(layout, LyricsLayout::Full | LyricsLayout::Cover),
-        matches!(layout, LyricsLayout::Cover | LyricsLayout::Stage),
+        matches!(
+            layout,
+            LyricsLayout::Cover | LyricsLayout::Stage | LyricsLayout::Card
+        ),
         app.accent,
     );
     let height = inner.height as usize;
@@ -1978,7 +2111,7 @@ const HELP_PLAY: HelpEntries = &[
     ("s  r", "toggle shuffle / cycle repeat"),
     (
         "L  F",
-        "lyrics panel / cycle fullscreen lyrics, cover and stage views (Esc closes)",
+        "lyrics panel / cycle fullscreen lyrics, cover, stage and card views (Esc closes)",
     ),
     (
         "ga  or  :artist",
@@ -2531,6 +2664,26 @@ mod tests {
         assert!(text(&stage).contains("Verse"));
         assert!(text(&stage).contains("Cover art unavailable"));
         assert!(!text(&stage).contains("Now Playing"));
+        assert!(!text(&stage).contains("·  Stage"));
+        for (width, height) in [(80, 24), (50, 20), (40, 10)] {
+            let mut small = Terminal::new(TestBackend::new(width, height)).unwrap();
+            small.draw(|f| draw(f, app)).unwrap();
+        }
+
+        // The fourth `F` opens the card view: cover on the left, playback
+        // state, details and a small lyric window on the right.
+        press(app, KeyCode::Char('F'));
+        assert!(app.mode == Mode::LyricsCard);
+        let mut card = Terminal::new(TestBackend::new(120, 32)).unwrap();
+        card.draw(|f| draw(f, app)).unwrap();
+        assert!(text(&card).contains("PLAYING") || text(&card).contains("PAUSED"));
+        assert!(text(&card).contains("Cover Song"));
+        assert!(text(&card).contains("First Artist, Second Artist"));
+        assert!(text(&card).contains("0:27") && text(&card).contains("-1:03"));
+        assert!(text(&card).contains("Verse"));
+        assert!(text(&card).contains("Cover art unavailable"));
+        assert!(!text(&card).contains("·  Card"));
+        // too small for the card, so it falls back to the stage view
         for (width, height) in [(80, 24), (50, 20), (40, 10)] {
             let mut small = Terminal::new(TestBackend::new(width, height)).unwrap();
             small.draw(|f| draw(f, app)).unwrap();

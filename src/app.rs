@@ -120,16 +120,23 @@ pub enum Mode {
     Lyrics,
     LyricsArtwork,
     LyricsStage,
+    LyricsCard,
 }
 
 impl Mode {
     pub fn is_lyrics(self) -> bool {
-        matches!(self, Self::Lyrics | Self::LyricsArtwork | Self::LyricsStage)
+        matches!(
+            self,
+            Self::Lyrics | Self::LyricsArtwork | Self::LyricsStage | Self::LyricsCard
+        )
     }
 
     /* The fullscreen views that draw their own track details and cover. */
     pub fn shows_cover(self) -> bool {
-        matches!(self, Self::LyricsArtwork | Self::LyricsStage)
+        matches!(
+            self,
+            Self::LyricsArtwork | Self::LyricsStage | Self::LyricsCard
+        )
     }
 }
 
@@ -660,7 +667,9 @@ impl App {
             Mode::ConfirmDelete => self.key_confirm_delete(key),
             Mode::Menu => self.key_menu(key),
             Mode::Info => self.key_info(key),
-            Mode::Lyrics | Mode::LyricsArtwork | Mode::LyricsStage => self.key_lyrics(key),
+            Mode::Lyrics | Mode::LyricsArtwork | Mode::LyricsStage | Mode::LyricsCard => {
+                self.key_lyrics(key)
+            }
             Mode::Normal => self.key_normal(key),
         }
     }
@@ -1167,6 +1176,7 @@ impl App {
                 self.mode = match self.mode {
                     Mode::Lyrics => Mode::LyricsArtwork,
                     Mode::LyricsArtwork => Mode::LyricsStage,
+                    Mode::LyricsStage => Mode::LyricsCard,
                     _ => Mode::Normal,
                 };
             }
@@ -3247,6 +3257,7 @@ mod tests {
             Mode::Lyrics,
             Mode::LyricsArtwork,
             Mode::LyricsStage,
+            Mode::LyricsCard,
         ] {
             app.mode = mode;
             app.status = None;
