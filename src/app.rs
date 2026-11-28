@@ -1,12 +1,12 @@
 use std::collections::HashSet;
 use std::sync::mpsc::Sender;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::widgets::TableState;
 
-use crate::command::{self, Amount, Command, DownloadTarget, COMMAND_NAMES};
+use crate::command::{self, Amount, Command, DownloadTarget, SleepArg, COMMAND_NAMES};
 use crate::config::{self, Audio, Config};
 use crate::cover;
 use crate::discord::Discord;
@@ -164,6 +164,12 @@ impl SearchKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sleep {
+    At(Instant),
+    AfterSong,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PlayState {
     Stopped,
@@ -300,6 +306,7 @@ pub struct App {
     pub duration: f64,
     pub volume: u8,
     pub speed: f64,
+    pub sleep: Option<Sleep>,
     pub shuffle: bool,
     pub repeat: RepeatMode,
     pub accent: ratatui::style::Color,
@@ -423,6 +430,7 @@ impl App {
             duration: 0.0,
             volume: p.volume,
             speed: 1.0,
+            sleep: None,
             shuffle: p.shuffle,
             repeat: p.repeat,
             accent: cfg.ui.accent,
@@ -542,6 +550,7 @@ impl App {
         self.sync_mpris();
         self.sync_discord();
         self.sync_scrobbler();
+        self.check_sleep();
         /* open the picker once nothing else is being typed, so keys aren't hijacked */
         if self.mode == Mode::Normal && !self.picks.is_empty() {
             self.mode = Mode::CollectionPick;
@@ -1529,6 +1538,7 @@ impl App {
             Command::ShowMostPlayed => self.set_view(View::MostPlayed),
             Command::Volume(a) => self.set_volume(a),
             Command::Speed(a) => self.set_speed(a),
+            Command::Sleep(a) => self.set_sleep(a),
             Command::Seek(a) => self.seek(a),
             Command::Shuffle => self.toggle_shuffle(),
             Command::Repeat(m) => {
@@ -2188,7 +2198,12 @@ impl App {
             }
             PlayerEvent::EndOfFile => {
                 if self.play_state != PlayState::Stopped {
-                    self.advance(true);
+                    if self.sleep == Some(Sleep::AfterSong) {
+                        self.stop_playback();
+                        self.info("Sleep timer: playback stopped");
+                    } else {
+                        self.advance(true);
+                    }
                 }
             }
             PlayerEvent::LoadError(msg) => {
@@ -2492,11 +2507,68 @@ impl App {
     fn stop_playback(&mut self) {
         self.want = None;
         self.resume = None;
+        self.sleep = None;
         if let Some(p) = self.player.as_mut() {
             let _ = p.stop();
         }
         self.play_state = PlayState::Stopped;
         self.position = 0.0;
+    }
+
+    fn set_sleep(&mut self, arg: SleepArg) {
+        match arg {
+            SleepArg::Show => match self.sleep {
+                Some(Sleep::AfterSong) => self.info("Playback will stop after this song"),
+                Some(Sleep::At(_)) => {
+                    let label = self.sleep_label().unwrap_or_default();
+                    self.info(format!("Sleep timer: {label} left"));
+                }
+                None => self.info("No sleep timer set"),
+            },
+            SleepArg::Minutes(m) => {
+                self.sleep = Some(Sleep::At(Instant::now() + Duration::from_secs(m * 60)));
+                self.info(format!("Playback will stop in {m} min"));
+            }
+            SleepArg::AfterSong => {
+                if self.play_state == PlayState::Stopped {
+                    return self.error("Nothing is playing");
+                }
+                self.sleep = Some(Sleep::AfterSong);
+                self.info("Playback will stop after this song");
+            }
+            SleepArg::Off => {
+                let message = if self.sleep.take().is_some() {
+                    "Sleep timer cancelled"
+                } else {
+                    "No sleep timer set"
+                };
+                self.info(message);
+            }
+        }
+    }
+
+    fn check_sleep(&mut self) {
+        let Some(Sleep::At(at)) = self.sleep else {
+            return;
+        };
+        if Instant::now() < at {
+            return;
+        }
+        let was_playing = self.play_state != PlayState::Stopped;
+        self.stop_playback();
+        if was_playing {
+            self.info("Sleep timer: playback stopped");
+        }
+    }
+
+    pub fn sleep_label(&self) -> Option<String> {
+        match self.sleep? {
+            Sleep::AfterSong => Some("song".into()),
+            Sleep::At(at) => {
+                let secs = at.saturating_duration_since(Instant::now()).as_secs();
+                Some(format!("{}m", secs.div_ceil(60)))
+            }
+        }
     }
 
     fn next(&mut self) {
@@ -3424,6 +3496,35 @@ mod tests {
         assert_eq!(app.history_data.entries.len(), recorded);
     }
 
+    fn check_sleep_timer(app: &mut App) {
+        app.queue = vec![track("aaaaaaaaaaa", "A"), track("bbbbbbbbbbb", "B")];
+        app.current = Some(0);
+        app.on_radio = false;
+        app.want = None;
+        app.play_state = PlayState::Playing;
+
+        app.run_command("sleep 30");
+        assert!(matches!(app.sleep, Some(Sleep::At(_))));
+        assert!(app.sleep_label().is_some_and(|l| l.ends_with('m')));
+        app.run_command("sleep off");
+        assert!(app.sleep.is_none());
+
+        app.sleep = Some(Sleep::At(Instant::now()));
+        app.check_sleep();
+        assert!(app.play_state == PlayState::Stopped);
+        assert!(app.sleep.is_none());
+
+        app.run_command("sleep song");
+        assert!(app.sleep.is_none());
+
+        app.play_state = PlayState::Playing;
+        app.run_command("sleep song");
+        assert_eq!(app.sleep, Some(Sleep::AfterSong));
+        app.on_player(PlayerEvent::EndOfFile);
+        assert!(app.play_state == PlayState::Stopped);
+        assert!(app.sleep.is_none());
+    }
+
     fn check_playlist_playback(app: &mut App) {
         app.queue.clear();
         app.current = None;
@@ -3693,6 +3794,7 @@ mod tests {
         assert_eq!(app.queue.len(), 1);
 
         check_pending_playback_events(&mut app);
+        check_sleep_timer(&mut app);
         check_playlist_playback(&mut app);
 
         // Test savealbum and saveresults

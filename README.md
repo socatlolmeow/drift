@@ -46,6 +46,7 @@ Press `Enter` to play, `a` to queue, `f` to like a song and `?` for every keybin
   - [Shell completions](#shell-completions)
 - [Keybinds](#keybinds)
 - [Commands](#commands)
+- [Sleep timer](#sleep-timer)
 - [Liked songs](#liked-songs)
 - [Lyrics](#lyrics)
 - [MPRIS and playerctl](#mpris-and-playerctl)
@@ -218,6 +219,7 @@ Press `:` to open the command line. Most commands have short aliases (`:vol`, `:
 | `:seek 90` `1:30` `+10` | absolute or relative seek |
 | `:vol 50` `+5` | set or change the volume |
 | `:speed 1.25` `+0.25` `reset` | playback speed from 0.25x to 4x (alias `:spd`) |
+| `:sleep 30` `song` `off` | stop playback after 30 minutes or after the current song; `off` cancels |
 | `:shuffle` `:repeat [off\|all\|one]` | playback modes |
 | `:add [N]` `:addall` `:playall` | queue results |
 | `:download [current\|selected\|all]` | download audio files (defaults to the current song; alias `:dl`) |
@@ -237,6 +239,12 @@ Press `:` to open the command line. Most commands have short aliases (`:vol`, `:
 | `:quit` | quit |
 
 `:save` refuses to overwrite an existing playlist. Use `:save!` to replace it or `:append` to add to the end of it.
+
+## Sleep timer
+
+`:sleep 30` stops playback after 30 minutes (1 to 1440). `:sleep song` stops it when the current song ends, even with repeat-one on. `:sleep off` cancels the timer, and `:sleep` on its own shows what is set.
+
+The time left shows in the player bar. Stopping playback by hand also ends the timer, and the timer isn't saved between sessions. It stops playback the same way `:stop` does, so your queue stays as it was.
 
 ## Liked songs
 

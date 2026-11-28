@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sleep timer: `:sleep 30` stops playback after 30 minutes, `:sleep song`
+  stops it when the current song ends, and `:sleep off` cancels. The time left
+  is shown in the player bar.
 - Shell completions: `drift --completions <shell>` prints a completion script
   for bash, zsh, fish, elvish or powershell.
 - A fourth fullscreen layout, the card view: press `F` once more after the

@@ -759,9 +759,13 @@ fn draw_now_playing(f: &mut Frame, app: &App, area: Rect) {
                 dim()
             },
         ),
-        Span::raw("   "),
-        Span::styled("vol ", dim()),
     ];
+    if let Some(label) = app.sleep_label() {
+        flags.push(Span::raw("   "));
+        flags.push(Span::styled(format!("sleep {label}"), on));
+    }
+    flags.push(Span::raw("   "));
+    flags.push(Span::styled("vol ", dim()));
     for i in 0..vol_cells {
         flags.push(if i < vol_fill.min(vol_cells) {
             Span::styled(
@@ -1749,6 +1753,7 @@ const CMD_INFO: &[(&str, &str)] = &[
     ("mostplayed", "show songs ordered by play count"),
     ("volume", "set volume  ·  50 | +5 | -5"),
     ("speed", "playback speed  ·  1.25 | +0.25 | reset"),
+    ("sleep", "stop playback later  ·  30 | song | off"),
     ("seek", "seek  ·  90 | 1:30 | +10 | -10"),
     ("shuffle", "toggle shuffle"),
     ("repeat", "repeat  ·  off | all | one"),
@@ -2189,6 +2194,10 @@ const HELP_CMDS: HelpEntries = &[
     (":seek 90 | 1:30 | +10", "absolute or relative seek"),
     (":vol 50 | +5", "set or change the volume"),
     (":speed 1.25 | +0.25 | reset", "playback speed, 0.25 to 4"),
+    (
+        ":sleep 30 | song | off",
+        "stop after 30 minutes or after this song; off cancels",
+    ),
     (":shuffle  :repeat [m]", "modes: off, all or one"),
     (":add [N]  :addall", "queue a result / all results"),
     (
