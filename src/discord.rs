@@ -161,6 +161,7 @@ fn send(client: &mut DiscordIpcClient, msg: &Msg) -> bool {
     let artist = fit_field(&p.artist);
     let album = p.album.as_deref().map(fit_field);
 
+    // Album only appears as the hover text on the cover, not as a text line
     let mut assets = Assets::new().large_image(&p.cover);
     if let Some(album) = &album {
         assets = assets.large_text(album);
@@ -171,9 +172,10 @@ fn send(client: &mut DiscordIpcClient, msg: &Msg) -> bool {
         timestamps = timestamps.end(end);
     }
 
+    // Details = song title (shown in "Listening to <title>"), state = artist
     let activity = Activity::new()
         .activity_type(ActivityType::Listening)
-        .status_display_type(StatusDisplayType::Name)
+        .status_display_type(StatusDisplayType::Details)
         .details(&title)
         .state(&artist)
         .assets(assets)
