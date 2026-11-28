@@ -18,28 +18,58 @@ mod sys;
 mod ui;
 mod ytmusic;
 
+use std::io;
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
 use anyhow::Result;
+use clap::{CommandFactory, Parser};
+use clap_complete::Shell;
 use ratatui::crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
 
 use app::{App, AppEvent};
 
-const USAGE: &str = "\
-drift - vim-style terminal player for YouTube Music (no login needed)
+#[derive(Parser)]
+#[command(
+    version,
+    about = "A vim-style terminal player for YouTube Music (no login needed)",
+    after_help = "Inside the player press ? for key bindings and :help for commands."
+)]
+struct Cli {
+    #[arg(
+        value_name = "QUERY",
+        conflicts_with = "action",
+        help = "Start the player and run this search first"
+    )]
+    query: Vec<String>,
 
-USAGE:
-    drift [QUERY...]      start the player, optionally running a search first
-    drift --check         verify that mpv and yt-dlp are installed
-    drift --lastfm-login  sign in to Last.fm so plays are scrobbled
-    drift --lastfm-logout sign out of Last.fm
-    drift --help          show this help
-    drift --version
+    #[arg(
+        long,
+        group = "action",
+        help = "Verify that mpv and yt-dlp are installed"
+    )]
+    check: bool,
 
-Inside the player press ? for key bindings and :help for commands.";
+    #[arg(
+        long,
+        group = "action",
+        help = "Sign in to Last.fm so plays are scrobbled"
+    )]
+    lastfm_login: bool,
+
+    #[arg(long, group = "action", help = "Sign out of Last.fm")]
+    lastfm_logout: bool,
+
+    #[arg(
+        long,
+        group = "action",
+        value_name = "SHELL",
+        help = "Print a shell completion script"
+    )]
+    completions: Option<Shell>,
+}
 
 fn tool_version(name: &str) -> Option<String> {
     let mut cmd = Command::new(name);
@@ -97,37 +127,33 @@ fn exit_code(result: Result<()>) -> ExitCode {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match args.first().map(String::as_str) {
-        Some("-h") | Some("--help") => {
-            println!("{USAGE}");
-            return ExitCode::SUCCESS;
-        }
-        Some("-V") | Some("--version") => {
-            println!("drift {}", env!("CARGO_PKG_VERSION"));
-            return ExitCode::SUCCESS;
-        }
-        Some("--check") => {
-            let missing = missing_dependencies(true);
-            return if missing.is_empty() {
-                println!("All dependencies found.");
-                ExitCode::SUCCESS
-            } else {
-                for m in &missing {
-                    eprintln!("{m}");
-                }
-                ExitCode::FAILURE
-            };
-        }
-        Some("--lastfm-login") => {
-            let (cfg, warning) = config::Config::load();
-            if let Some(w) = warning {
-                eprintln!("warning: {w}");
+    let cli = Cli::parse();
+
+    if let Some(shell) = cli.completions {
+        clap_complete::generate(shell, &mut Cli::command(), "drift", &mut io::stdout());
+        return ExitCode::SUCCESS;
+    }
+    if cli.check {
+        let missing = missing_dependencies(true);
+        return if missing.is_empty() {
+            println!("All dependencies found.");
+            ExitCode::SUCCESS
+        } else {
+            for m in &missing {
+                eprintln!("{m}");
             }
-            return exit_code(lastfm::login(&cfg.lastfm));
+            ExitCode::FAILURE
+        };
+    }
+    if cli.lastfm_login {
+        let (cfg, warning) = config::Config::load();
+        if let Some(w) = warning {
+            eprintln!("warning: {w}");
         }
-        Some("--lastfm-logout") => return exit_code(lastfm::logout()),
-        _ => {}
+        return exit_code(lastfm::login(&cfg.lastfm));
+    }
+    if cli.lastfm_logout {
+        return exit_code(lastfm::logout());
     }
 
     if setup::needed() {
@@ -152,7 +178,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let initial = (!args.is_empty()).then(|| args.join(" "));
+    let initial = (!cli.query.is_empty()).then(|| cli.query.join(" "));
     match run(initial) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

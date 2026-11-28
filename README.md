@@ -43,6 +43,7 @@ Press `Enter` to play, `a` to queue, `f` to like a song and `?` for every keybin
   - [Nix](#nix)
   - [Installing mpv and yt-dlp manually](#installing-mpv-and-yt-dlp-manually)
 - [Usage](#usage)
+  - [Shell completions](#shell-completions)
 - [Keybinds](#keybinds)
 - [Commands](#commands)
 - [Liked songs](#liked-songs)
@@ -151,11 +152,24 @@ nix run github:socatlolmeow/drift
 drift                    # start the player
 drift "daft punk"        # start with a search
 drift --check            # check that mpv and yt-dlp are installed
+drift --completions zsh  # print a shell completion script
 drift --help
 drift --version
 ```
 
 Press `/` to search, `Enter` to play, `a` to add a song to the queue and `?` for the full list of keybinds. Inside the player, `:help` lists the commands.
+
+### Shell completions
+
+`drift --completions <shell>` prints a completion script for `bash`, `zsh`, `fish`, `elvish` or `powershell`. For example:
+
+```bash
+drift --completions bash > ~/.local/share/bash-completion/completions/drift
+drift --completions zsh > ~/.zfunc/_drift
+drift --completions fish > ~/.config/fish/completions/drift.fish
+```
+
+For zsh, `~/.zfunc` must be in your `fpath` before `compinit` runs. Restart your shell afterwards.
 
 ## Keybinds
 
