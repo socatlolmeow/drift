@@ -224,6 +224,7 @@ fn event_loop(
                 app.on_key(key);
             }
         }
+        mpris::pump();
         while let Ok(ev) = rx.try_recv() {
             app.on_event(ev);
         }

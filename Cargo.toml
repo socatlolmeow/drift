@@ -26,6 +26,9 @@ ratatui-image = { version = "10.0.8", default-features = false, features = ["cro
 [target.'cfg(target_os = "linux")'.dependencies]
 souvlaki = { version = "0.9", default-features = false, features = ["use_zbus"] }
 
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+souvlaki = { version = "0.9", default-features = false }
+
 [profile.release]
 lto = true
 codegen-units = 1

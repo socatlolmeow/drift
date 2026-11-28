@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Media keys and system media controls on Windows (System Media Transport
+  Controls) and macOS (Now Playing), in addition to MPRIS on Linux.
 - Sleep timer: `:sleep 30` stops playback after 30 minutes, `:sleep song`
   stops it when the current song ends, and `:sleep off` cancels. The time left
   is shown in the player bar.
