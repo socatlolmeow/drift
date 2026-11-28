@@ -1094,7 +1094,7 @@ impl App {
                 let Some(name) = self.playlist_name(self.selected()) else {
                     return;
                 };
-                self.prefill_command(&format!("rename \"{name}\" ")); 
+                self.prefill_command(&format!("rename \"{name}\" "));
             }
             MenuAction::Info => {
                 if let Some(t) = track {
@@ -3119,21 +3119,31 @@ impl App {
         if name == LIKED_SONGS {
             return self.error("Liked Songs can't be renamed");
         }
-        if self.store.resolve_exact(new_name).is_some_and(|n| n != name) {
-            return self.error(format!("Playlist \u{201c}{new_name}\u{201d} already exists"));
+        if self
+            .store
+            .resolve_exact(new_name)
+            .is_some_and(|n| n != name)
+        {
+            return self.error(format!(
+                "Playlist \u{201c}{new_name}\u{201d} already exists"
+            ));
         }
-        let Some(tracks) = self.store.playlists.remove(name) else { 
-            return self.error(format!("There is no playlist called \u{201c}{name}\u{201d}"));
+        let Some(tracks) = self.store.playlists.remove(name) else {
+            return self.error(format!(
+                "There is no playlist called \u{201c}{name}\u{201d}"
+            ));
         };
         self.store.playlists.insert(new_name.to_string(), tracks);
         if self.view == View::Playlists && !self.in_playlist() {
-            let idx = self.store.names().iter().position(|n| *n == new_name); 
+            let idx = self.store.names().iter().position(|n| *n == new_name);
             if let Some(i) = idx {
                 self.set_selected(i);
             }
         }
         if self.persist() {
-            self.info(format!("Renamed \u{201c}{name}\u{201d} to \u{201c}{new_name}\u{201d}"));  
+            self.info(format!(
+                "Renamed \u{201c}{name}\u{201d} to \u{201c}{new_name}\u{201d}"
+            ));
         }
     }
 }

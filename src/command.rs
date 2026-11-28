@@ -237,14 +237,14 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
         "delpl" | "deletepl" | "delete" => DeletePlaylist(name_arg(arg, "delpl")?),
         "rename" => {
             let (old, new) = match rest.strip_prefix('"') {
-                Some(r) => r.split_once('"').unwrap_or((r,"")),
-                None => rest.split_once('"').unwrap_or((rest,"")),
+                Some(r) => r.split_once('"').unwrap_or((r, "")),
+                None => rest.split_once('"').unwrap_or((rest, "")),
             };
             if old.is_empty() | new.is_empty() {
                 return Err("usage: :rename <playlist> <new name>".into());
             }
             RenamePlaylist(name_arg(old, "rename")?, name_arg(new, "rename")?)
-        },
+        }
         "addto" => AddTo(name_arg(arg, "addto")?),
         "like" | "love" => Like(true),
         "unlike" => Like(false),

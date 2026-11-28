@@ -402,7 +402,14 @@ impl Answers {
             cookies_from_browser: BROWSERS[self.cookies].1.to_string(),
             ..Audio::default()
         };
-        Config::render(&playback, &Artist::default(), &ui, &discord, &lastfm, &audio)
+        Config::render(
+            &playback,
+            &Artist::default(),
+            &ui,
+            &discord,
+            &lastfm,
+            &audio,
+        )
     }
 }
 
@@ -940,7 +947,10 @@ impl Wizard {
             .collect();
         if missing.is_empty() {
             out.push(Line::from(""));
-            out.push(Line::styled("Everything drift needs is installed.", plain()));
+            out.push(Line::styled(
+                "Everything drift needs is installed.",
+                plain(),
+            ));
         } else {
             out.push(Line::from(""));
             out.push(Line::styled(
@@ -1091,10 +1101,7 @@ impl Wizard {
             .enumerate()
             .map(|(i, c)| {
                 let on = i == self.cursor;
-                let mut spans = vec![Span::styled(
-                    if on { "› " } else { "  " },
-                    bold(accent),
-                )];
+                let mut spans = vec![Span::styled(if on { "› " } else { "  " }, bold(accent))];
                 if let Some(color) = c.color {
                     spans.push(Span::styled("● ", tint(color)));
                 }
@@ -1141,10 +1148,7 @@ impl Wizard {
                 .collect();
             spans.push(Span::styled(hint, dim()));
         }
-        vec![
-            Line::from(spans),
-            Line::styled("─".repeat(w), tint(accent)),
-        ]
+        vec![Line::from(spans), Line::styled("─".repeat(w), tint(accent))]
     }
 
     fn footer(&self) -> Line<'static> {
