@@ -13,6 +13,14 @@ pub enum DownloadTarget {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SleepArg {
+    Show,
+    Minutes(u64),
+    AfterSong,
+    Off,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     Search(String),
@@ -37,6 +45,7 @@ pub enum Command {
     ShowMostPlayed,
     Volume(Amount),
     Speed(Amount),
+    Sleep(SleepArg),
     Seek(Amount),
     Shuffle,
     Repeat(Option<RepeatMode>),
@@ -82,6 +91,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "mostplayed",
     "volume",
     "speed",
+    "sleep",
     "seek",
     "shuffle",
     "repeat",
@@ -219,6 +229,15 @@ pub fn parse(line: &str) -> Result<Option<Command>, String> {
         "mostplayed" | "most" => ShowMostPlayed,
         "volume" | "vol" | "v" => Volume(parse_amount(arg, "volume")?),
         "speed" | "spd" => Speed(parse_speed(arg)?),
+        "sleep" => Sleep(match arg.to_ascii_lowercase().as_str() {
+            "" => SleepArg::Show,
+            "song" | "track" => SleepArg::AfterSong,
+            "off" | "cancel" | "stop" => SleepArg::Off,
+            minutes => match minutes.parse::<u64>() {
+                Ok(m) if (1..=1440).contains(&m) => SleepArg::Minutes(m),
+                _ => return Err("usage: :sleep [minutes|song|off]".into()),
+            },
+        }),
         "seek" => Seek(parse_amount(arg, "seek")?),
         "shuffle" => Shuffle,
         "repeat" => match arg.to_ascii_lowercase().as_str() {
@@ -305,6 +324,24 @@ mod tests {
         assert!(parse("download unknown").is_err());
         assert!(parse("download all extra").is_err());
         assert!(COMMAND_NAMES.contains(&"download"));
+    }
+
+    #[test]
+    fn sleep_commands() {
+        for (input, arg) in [
+            ("sleep", SleepArg::Show),
+            ("sleep 30", SleepArg::Minutes(30)),
+            (":sleep 1440", SleepArg::Minutes(1440)),
+            ("sleep song", SleepArg::AfterSong),
+            ("sleep OFF", SleepArg::Off),
+            ("sleep cancel", SleepArg::Off),
+        ] {
+            assert_eq!(parse(input), Ok(Some(Command::Sleep(arg))));
+        }
+        for bad in ["sleep 0", "sleep 1441", "sleep -5", "sleep 1.5", "sleep soon"] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+        assert!(COMMAND_NAMES.contains(&"sleep"));
     }
 
     #[test]
