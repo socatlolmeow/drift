@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shell completions: `drift --completions <shell>` prints a completion script
+  for bash, zsh, fish, elvish or powershell.
 - A fourth fullscreen layout, the card view: press `F` once more after the
   stage view to get a wide card with the cover on the left and the title,
   artist, album, a small lyric window and the progress bar on the right.
@@ -39,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Command-line arguments are now parsed with clap. The existing flags and
+  `drift [QUERY...]` work as before, and `--help` output is generated.
 - Without a structured artist list (older saves), a credit is only split on
   `feat.`, `ft.` and `×`. Names like "Hall & Oates" or "Blood, Sweat & Tears"
   are no longer broken into pieces, and the hardcoded list of exceptions is gone.
