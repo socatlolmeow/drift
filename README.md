@@ -186,7 +186,7 @@ These are the defaults. You can change them, see [Custom keys](#custom-keys).
 | `gd` | download the highlighted song |
 | `gD` | download the whole album, playlist, queue or loaded results |
 | `L` | toggle the lyrics panel |
-| `F` | cycle fullscreen lyrics → cover art and lyrics → stage view → player |
+| `F` | cycle fullscreen lyrics → cover art and lyrics → stage view → card view → player |
 | `/` `:` | search / command line |
 | `?` | help |
 | `q` | quit |
@@ -237,11 +237,13 @@ Likes are stored with your other playlists, in `playlists.json`. Deleting the Li
 
 ## Lyrics
 
-Press `L` for a side panel (needs a terminal at least 70 columns wide). Press `F` to cycle through fullscreen lyrics, cover art and lyrics, the stage view, and back to the player. `Esc`, `q` or `L` also closes any fullscreen view.
+Press `L` for a side panel (needs a terminal at least 70 columns wide). Press `F` to cycle through fullscreen lyrics, cover art and lyrics, the stage view, the card view, and back to the player. `Esc`, `q` or `L` also closes any fullscreen view.
 
 The cover view shows square artwork, the song title, artist and album, and a progress bar with elapsed and remaining time on the left. Lyrics appear on the right, with the current line kept near the middle and surrounding lines fading with distance. This view hides the bottom player bar to give the artwork and lyrics more room.
 
 The stage view is a centered "now playing poster": the cover on top, then the title (with its heart), artist, album and progress bar, and a small window of lyrics underneath with the current line in the middle. Like the cover view it hides the bottom player bar. On short windows the cover is dropped first, then the lyric window shrinks.
+
+The card view is the wide version: the cover on the left and, next to it, a "playback state (playing, paused or loading), the title (with its heart on the right), artist, album, a small window of lyrics and the progress bar. It also hides the bottom player bar, and falls back to the stage view when the window is too small (roughly under 65 columns or 15 rows).
 
 In the lyrics and cover views the current line gets bold, white text on a dark neutral band with extra breathing room, while nearby lines fade with distance. It fills in as it's sung. Songs without synced lyrics show plain text that you can scroll with `j`/`k`.
 

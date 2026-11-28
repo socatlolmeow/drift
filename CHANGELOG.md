@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A fourth fullscreen layout, the card view: press `F` once more after the
+  stage view to get a wide card with the cover on the left and the title,
+  artist, album, a small lyric window and the progress bar on the right.
+  `F` now cycles lyrics, cover, stage, card, then back to the player.
 - A third fullscreen layout, the stage view: press `F` once more after the
   cover view to get a centered cover, title, artist and progress bar with a
   small fading window of lyrics underneath. `F` now cycles lyrics, cover,
@@ -43,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Saving an album from a song now uses the song's own artist list when it has one.
+- The cover on the Discord Rich Presence now has no black bars like before.
 
 ## [1.7.0] - 2026-11-15
 
